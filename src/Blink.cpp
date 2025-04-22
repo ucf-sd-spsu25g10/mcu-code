@@ -1,4 +1,4 @@
-/* Blink Example
+/* Blink Example with Web Server for ESP32
    This example code is in the Public Domain (or CC0 licensed, at your option.)
    Unless required by applicable law or agreed to in writing, this
    software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
@@ -6,36 +6,238 @@
 */
 
 #include <Arduino.h>
+#include <WiFi.h>        // ESP32 WiFi library
+#include <WebServer.h>   // ESP32 WebServer
+#include <ArduinoJson.h> // Add JSON library
+#include "credentials.h" // Include the credentials header file
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+
+// Web server on port 80
+WebServer server(80);
 
 // Define the GPIO for blinking - using CONFIG_BLINK_GPIO from build flags
 #ifndef CONFIG_BLINK_GPIO
-#define CONFIG_BLINK_GPIO 2  // Default to GPIO2 (D4 on NodeMCU)
+#define CONFIG_BLINK_GPIO 2  // Default to GPIO2 (onboard LED for many ESP32 boards)
 #endif
 
-#ifndef LED_BUILTIN
-#define LED_BUILTIN 2  // Default built-in LED pin for ESP8266
-#endif
+// Define timing variables
+bool ledState = false;
+
+// Array to store received numbers
+const int MAX_NUMBERS = 20;
+int receivedNumbers[MAX_NUMBERS];
+int numbersCount = 0;
+
+// Mutex for protecting shared resources
+SemaphoreHandle_t xMutex = NULL;
+
+// Task handles
+TaskHandle_t blinkTaskHandle = NULL;
+TaskHandle_t webServerTaskHandle = NULL;
+
+void handleRoot() {
+  String html = "<html><body>";
+  html += "<h1>ESP32 API Server</h1>";
+  html += "<p>LED is currently: ";
+  
+  if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
+    html += (ledState ? "ON" : "OFF");
+    xSemaphoreGive(xMutex);
+  }
+  
+  html += "</p>";
+  html += "<p>Send a POST request to /api/cartList with a JSON array of numbers</p>";
+  
+  // Display received numbers if any
+  if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
+    if (numbersCount > 0) {
+      html += "<h2>Received Numbers:</h2><ul>";
+      for (int i = 0; i < numbersCount; i++) {
+        html += "<li>" + String(receivedNumbers[i]) + "</li>";
+      }
+      html += "</ul>";
+    }
+    xSemaphoreGive(xMutex);
+  }
+  
+  html += "</body></html>";
+  server.send(200, "text/html", html);
+}
+
+void handleToggle() {
+  if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
+    ledState = !ledState;
+    digitalWrite(CONFIG_BLINK_GPIO, ledState);
+    xSemaphoreGive(xMutex);
+  }
+  
+  server.sendHeader("Location", "/");
+  server.send(303);  // Redirect back to root
+}
+
+void handleNumbersApi() {
+  if (server.method() != HTTP_POST) {
+    server.send(405, "application/json", "{\"error\":\"Method Not Allowed\"}");
+    return;
+  }
+
+  String postBody = server.arg("plain");
+  Serial.println("Received POST data: " + postBody);
+  
+  // Allocate JsonDocument
+  DynamicJsonDocument doc(1024);
+  
+  // Deserialize the JSON document
+  DeserializationError error = deserializeJson(doc, postBody);
+  
+  // Test if parsing succeeds
+  if (error) {
+    String errorMsg = "{\"error\":\"" + String(error.c_str()) + "\"}";
+    server.send(400, "application/json", errorMsg);
+    Serial.println("JSON parse failed: " + String(error.c_str()));
+    return;
+  }
+  
+  // Verify we received an array
+  if (!doc.is<JsonArray>()) {
+    server.send(400, "application/json", "{\"error\":\"Expected JSON array of numbers\"}");
+    return;
+  }
+  
+  // Extract the numbers from the document
+  JsonArray array = doc.as<JsonArray>();
+  
+  if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
+    // Reset numbers array
+    numbersCount = 0;
+    
+    // Store each number
+    for (JsonVariant value : array) {
+      if (value.is<int>() && numbersCount < MAX_NUMBERS) {
+        receivedNumbers[numbersCount++] = value.as<int>();
+      }
+    }
+    
+    // Toggle LED to indicate successful reception
+    ledState = !ledState;
+    digitalWrite(CONFIG_BLINK_GPIO, ledState);
+    
+    xSemaphoreGive(xMutex);
+  }
+  
+  // Send response
+  String response = "{\"status\":\"success\",\"count\":" + String(numbersCount) + "}";
+  server.send(200, "application/json", response);
+}
+
+void handleNotFound() {
+  String message = "File Not Found\n\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET) ? "GET" : "POST";
+  message += "\nArguments: ";
+  message += server.args();
+  message += "\n";
+  
+  for (uint8_t i = 0; i < server.args(); i++) {
+    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+  }
+  
+  server.send(404, "text/plain", message);
+}
+
+// Blink task - handles LED blinking
+void blinkTask(void *parameter) {
+  TickType_t xLastWakeTime;
+  const TickType_t xFrequency = pdMS_TO_TICKS(500); // 500ms blink interval
+  xLastWakeTime = xTaskGetTickCount();
+  
+  for (;;) {
+    // Toggle LED
+    if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
+      digitalWrite(CONFIG_BLINK_GPIO, !digitalRead(CONFIG_BLINK_GPIO));
+      xSemaphoreGive(xMutex);
+    }
+    
+    // Print status periodically
+    Serial.println("Server running, IP: " + WiFi.localIP().toString());
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
+// Web server task - handles client requests
+void webServerTask(void *parameter) {
+  for (;;) {
+    server.handleClient();
+    vTaskDelay(1); // Small delay to allow other tasks to run
+  }
+}
 
 void setup() {
-    Serial.begin(115200);
-    Serial.println("ESP8266 Blink Example");
-    
-    // Setup LED pins
-    pinMode(CONFIG_BLINK_GPIO, OUTPUT);
-    pinMode(LED_BUILTIN, OUTPUT);
+  Serial.begin(115200);
+  Serial.println("ESP32 Blink Example with Web Server");
+  
+  // Create mutex for protecting shared resources
+  xMutex = xSemaphoreCreateMutex();
+  
+  // Setup LED pin
+  pinMode(CONFIG_BLINK_GPIO, OUTPUT);
+  
+  // Connect to WiFi network using credentials from header file
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.println("");
+  Serial.print("Connecting to WiFi");
+  
+  // Wait for connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    // Blink LED while connecting to indicate progress
+    digitalWrite(CONFIG_BLINK_GPIO, !digitalRead(CONFIG_BLINK_GPIO));
+  }
+  
+  Serial.println("");
+  Serial.print("Connected to ");
+  Serial.println(WIFI_SSID);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+  
+  // Set up web server routes
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/toggle", HTTP_GET, handleToggle);
+  server.on("/api/cartList", HTTP_POST, handleNumbersApi);
+  server.onNotFound(handleNotFound);
+  
+  // Start the server
+  server.begin();
+  Serial.println("HTTP server started");
+  
+  // Create RTOS tasks
+  xTaskCreate(
+    blinkTask,          // Function that implements the task
+    "BlinkTask",        // Text name for the task
+    2048,               // Stack size in words, not bytes
+    NULL,               // Parameter passed into the task
+    1,                  // Priority at which the task is created
+    &blinkTaskHandle    // Used to pass out the created task's handle
+  );
+  
+  xTaskCreate(
+    webServerTask,      // Function that implements the task
+    "WebServerTask",    // Text name for the task
+    4096,               // Stack size in words, not bytes (larger for web server)
+    NULL,               // Parameter passed into the task
+    1,                  // Priority at which the task is created
+    &webServerTaskHandle // Used to pass out the created task's handle
+  );
 }
 
 void loop() {
-    // Blink the configured GPIO
-    digitalWrite(CONFIG_BLINK_GPIO, HIGH);
-    delay(500);
-    digitalWrite(CONFIG_BLINK_GPIO, LOW);
-    
-    // Blink built-in LED with opposite pattern
-    digitalWrite(LED_BUILTIN, HIGH);  // Note: Some ESP8266 boards use inverted logic (LOW=ON)
-    delay(500);
-    digitalWrite(LED_BUILTIN, LOW);
-    
-    Serial.println("Hello from ESP8266!");
-    delay(500);
+  // Empty loop - tasks are handling everything
+  vTaskDelay(portMAX_DELAY); // Just wait forever, effectively suspending this task
 }
