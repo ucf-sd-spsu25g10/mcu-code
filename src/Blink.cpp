@@ -28,7 +28,7 @@ WebServer server(80);
 #define I2C_SCL 22
 
 // Define PWM pins and configuration
-#define PWM_PIN 5        // PWM output pin
+#define PWM_PIN 11        // PWM output pin
 #define PWM_CHANNEL 0    // PWM channel (ESP32 has 16 channels)
 #define PWM_RESOLUTION 8 // 8-bit resolution (0-255)
 #define PWM_FREQ_HZ 10   // Initial frequency 10Hz
