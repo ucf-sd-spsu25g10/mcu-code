@@ -37,6 +37,9 @@ SemaphoreHandle_t xMutex = NULL;
 TaskHandle_t blinkTaskHandle = NULL;
 TaskHandle_t webServerTaskHandle = NULL;
 
+// Add a flag for web server status
+volatile bool webServerActive = true;
+
 void handleRoot() {
   String html = "<html><body>";
   html += "<h1>ESP32 API Server</h1>";
@@ -130,6 +133,10 @@ void handleNumbersApi() {
   // Send response
   String response = "{\"status\":\"success\",\"count\":" + String(numbersCount) + "}";
   server.send(200, "application/json", response);
+  
+  // Mark web server as inactive to stop it after sending response
+  webServerActive = false;
+  Serial.println("Valid JSON received. Web server will disconnect.");
 }
 
 void handleNotFound() {
@@ -154,6 +161,8 @@ void blinkTask(void *parameter) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = pdMS_TO_TICKS(500); // 500ms blink interval
   xLastWakeTime = xTaskGetTickCount();
+  bool streamingStarted = false;
+  int currentIndex = 0;
   
   for (;;) {
     // Toggle LED
@@ -162,8 +171,38 @@ void blinkTask(void *parameter) {
       xSemaphoreGive(xMutex);
     }
     
-    // Print status periodically
-    Serial.println("Server running, IP: " + WiFi.localIP().toString());
+    if (webServerActive) {
+      Serial.println("Server running, IP: " + WiFi.localIP().toString());
+    } else {
+      // Server is done, stream numbers over UART
+      if (!streamingStarted) {
+        Serial.println("\n----- STREAMING RECEIVED NUMBERS OVER UART -----");
+        streamingStarted = true;
+      }
+      
+      // Stream one number per cycle over UART
+      if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
+        if (currentIndex < numbersCount) {
+          Serial.print("Number ");
+          Serial.print(currentIndex + 1);
+          Serial.print("/");
+          Serial.print(numbersCount);
+          Serial.print(": ");
+          Serial.println(receivedNumbers[currentIndex]);
+          currentIndex++;
+        }
+        else if (currentIndex == numbersCount && numbersCount > 0) {
+          Serial.println("----- ALL NUMBERS STREAMED -----");
+          // Reset to start streaming again after a delay
+          if (currentIndex >= numbersCount + 10) { // Wait 10 cycles before repeating
+            currentIndex = 0;
+          } else {
+            currentIndex++;
+          }
+        }
+        xSemaphoreGive(xMutex);
+      }
+    }
     
     // Wait for the next cycle
     vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -172,22 +211,6 @@ void blinkTask(void *parameter) {
 
 // Web server task - handles client requests
 void webServerTask(void *parameter) {
-  for (;;) {
-    server.handleClient();
-    vTaskDelay(1); // Small delay to allow other tasks to run
-  }
-}
-
-void setup() {
-  Serial.begin(115200);
-  Serial.println("ESP32 Blink Example with Web Server");
-  
-  // Create mutex for protecting shared resources
-  xMutex = xSemaphoreCreateMutex();
-  
-  // Setup LED pin
-  pinMode(CONFIG_BLINK_GPIO, OUTPUT);
-  
   // Connect to WiFi network using credentials from header file
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.println("");
@@ -216,6 +239,29 @@ void setup() {
   // Start the server
   server.begin();
   Serial.println("HTTP server started");
+  
+  for (;;) {
+    if (webServerActive) {
+      server.handleClient();
+    } else {
+      // Disconnect WiFi if web server is inactive
+      WiFi.disconnect();
+      Serial.println("WiFi disconnected.");
+      vTaskDelete(NULL); // Delete this task
+    }
+    vTaskDelay(1); // Small delay to allow other tasks to run
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("ESP32 Blink Example with Web Server");
+  
+  // Create mutex for protecting shared resources
+  xMutex = xSemaphoreCreateMutex();
+  
+  // Setup LED pin
+  pinMode(CONFIG_BLINK_GPIO, OUTPUT);
   
   // Create RTOS tasks
   xTaskCreate(
