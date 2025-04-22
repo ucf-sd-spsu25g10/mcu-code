@@ -9,6 +9,7 @@
 #include <WiFi.h>        // ESP32 WiFi library
 #include <WebServer.h>   // ESP32 WebServer
 #include <ArduinoJson.h> // Add JSON library
+#include <Wire.h>        // Include I2C library
 #include "credentials.h" // Include the credentials header file
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -22,6 +23,10 @@ WebServer server(80);
 #define CONFIG_BLINK_GPIO 2  // Default to GPIO2 (onboard LED for many ESP32 boards)
 #endif
 
+// Define I2C pins
+#define I2C_SDA 21
+#define I2C_SCL 22
+
 // Define timing variables
 bool ledState = false;
 
@@ -34,8 +39,9 @@ int numbersCount = 0;
 SemaphoreHandle_t xMutex = NULL;
 
 // Task handles
-TaskHandle_t blinkTaskHandle = NULL;
+TaskHandle_t uartTaskHandle = NULL;
 TaskHandle_t webServerTaskHandle = NULL;
+TaskHandle_t i2cTaskHandle = NULL; // Add task handle for I2C task
 
 // Add a flag for web server status
 volatile bool webServerActive = true;
@@ -156,8 +162,8 @@ void handleNotFound() {
   server.send(404, "text/plain", message);
 }
 
-// Blink task - handles LED blinking
-void blinkTask(void *parameter) {
+// UART task - handles LED blinking and UART streaming
+void uartTask(void *parameter) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = pdMS_TO_TICKS(500); // 500ms blink interval
   xLastWakeTime = xTaskGetTickCount();
@@ -253,6 +259,64 @@ void webServerTask(void *parameter) {
   }
 }
 
+// I2C master task - runs on core 1
+void i2cTask(void *parameter) {
+  // Initialize I2C with pins defined earlier
+  Wire.begin(I2C_SDA, I2C_SCL);
+  
+  Serial.println("I2C initialized as master on Core " + String(xPortGetCoreID()));
+  
+  const int I2C_SLAVE_ADDR = 0x08; // Example slave address
+  uint8_t requestCount = 0;
+  TickType_t xLastWakeTime;
+  const TickType_t xFrequency = pdMS_TO_TICKS(1000); // 1 second interval
+  
+  xLastWakeTime = xTaskGetTickCount();
+  
+  for(;;) {
+    if (!webServerActive && numbersCount > 0) {
+      // Only start I2C communications after web server is done
+      
+      if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
+        // Get the current number index based on request count
+        int currentIdx = requestCount % numbersCount;
+        int valueToSend = receivedNumbers[currentIdx];
+        xSemaphoreGive(xMutex);
+        
+        // Send the value to I2C slave
+        Wire.beginTransmission(I2C_SLAVE_ADDR);
+        Wire.write((uint8_t)(valueToSend & 0xFF));         // Low byte
+        Wire.write((uint8_t)((valueToSend >> 8) & 0xFF));  // High byte
+        uint8_t result = Wire.endTransmission();
+        
+        Serial.print("[I2C Core ");
+        Serial.print(xPortGetCoreID());
+        Serial.print("] Sent value ");
+        Serial.print(valueToSend);
+        Serial.print(" to slave (");
+        Serial.print(currentIdx + 1);
+        Serial.print("/");
+        Serial.print(numbersCount);
+        Serial.print(") - Result: ");
+        
+        switch(result) {
+          case 0: Serial.println("Success"); break;
+          case 1: Serial.println("Data too long"); break;
+          case 2: Serial.println("NACK on address"); break;
+          case 3: Serial.println("NACK on data"); break;
+          case 4: Serial.println("Other error"); break;
+          default: Serial.println("Unknown error"); break;
+        }
+        
+        requestCount++;
+      }
+    }
+    
+    // Wait for the next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("ESP32 Blink Example with Web Server");
@@ -264,13 +328,14 @@ void setup() {
   pinMode(CONFIG_BLINK_GPIO, OUTPUT);
   
   // Create RTOS tasks
-  xTaskCreate(
-    blinkTask,          // Function that implements the task
-    "BlinkTask",        // Text name for the task
+  xTaskCreatePinnedToCore(
+    uartTask,           // Function that implements the task
+    "UartTask",         // Text name for the task
     2048,               // Stack size in words, not bytes
     NULL,               // Parameter passed into the task
     1,                  // Priority at which the task is created
-    &blinkTaskHandle    // Used to pass out the created task's handle
+    &uartTaskHandle,    // Used to pass out the created task's handle
+    0                   // Run on core 0
   );
   
   xTaskCreate(
@@ -280,6 +345,16 @@ void setup() {
     NULL,               // Parameter passed into the task
     1,                  // Priority at which the task is created
     &webServerTaskHandle // Used to pass out the created task's handle
+  );
+
+  xTaskCreatePinnedToCore(
+    i2cTask,            // Function that implements the task
+    "I2CTask",          // Text name for the task
+    2048,               // Stack size in words, not bytes
+    NULL,               // Parameter passed into the task
+    1,                  // Priority at which the task is created
+    &i2cTaskHandle,     // Used to pass out the created task's handle
+    1                   // Run on core 1
   );
 }
 
