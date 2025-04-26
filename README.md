@@ -1,3 +1,5 @@
+Primary Contribitor: Michael Castiglia
+
 How to build PlatformIO based project
 =====================================
 
