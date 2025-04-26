@@ -14,6 +14,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h" // Add for queue support
 
 // Web server on port 80
 WebServer server(80);
@@ -57,6 +58,23 @@ volatile bool webServerActive = true;
 // Add PWM configuration variables
 int pwmFrequency = PWM_FREQ_HZ;    // PWM frequency in Hz
 int pwmDutyCycle = PWM_DUTY_PCT;   // PWM duty cycle percentage
+
+// Add UART communication parameters
+#define UART_BUFFER_SIZE 64
+char uartBuffer[UART_BUFFER_SIZE];
+int uartBufferIndex = 0;
+bool newUartDataAvailable = false;
+
+// Add feedback control variables
+float feedbackValue = 0.0;
+#define I2C_HAPTIC_ADDR 0x5A  // Example address for haptic driver
+#define I2C_SPEAKER_ADDR 0x34 // Example address for audio controller
+bool feedbackReceived = false;
+
+// Create a queue for passing feedback data between tasks
+QueueHandle_t feedbackQueue;
+#define QUEUE_LENGTH 10
+#define QUEUE_ITEM_SIZE sizeof(float)
 
 void handleRoot() {
   String html = "<html><body>";
@@ -174,13 +192,16 @@ void handleNotFound() {
   server.send(404, "text/plain", message);
 }
 
-// UART task - handles LED blinking and UART streaming
+// UART task - handles LED blinking, UART streaming, and UART receiving
 void uartTask(void *parameter) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = pdMS_TO_TICKS(500); // 500ms blink interval
   xLastWakeTime = xTaskGetTickCount();
   bool streamingStarted = false;
   int currentIndex = 0;
+  
+  // Initialize feedback queue
+  feedbackQueue = xQueueCreate(QUEUE_LENGTH, QUEUE_ITEM_SIZE);
   
   for (;;) {
     // Toggle LED
@@ -219,6 +240,35 @@ void uartTask(void *parameter) {
           }
         }
         xSemaphoreGive(xMutex);
+      }
+      
+      // Check for incoming UART data from target
+      if (Serial.available() > 0) {
+        // Read from UART
+        char inChar = Serial.read();
+        
+        // If newline is received, process the buffer
+        if (inChar == '\n') {
+          uartBuffer[uartBufferIndex] = '\0'; // Null terminate
+          
+          // Try to parse as float
+          float receivedValue = atof(uartBuffer);
+          
+          Serial.print("Received feedback value: ");
+          Serial.println(receivedValue);
+          
+          // Send to queue for I2C task to process
+          if (feedbackQueue != NULL) {
+            xQueueSend(feedbackQueue, &receivedValue, pdMS_TO_TICKS(10));
+          }
+          
+          // Reset buffer
+          uartBufferIndex = 0;
+        } 
+        else if (uartBufferIndex < UART_BUFFER_SIZE - 1) {
+          // Add character to buffer
+          uartBuffer[uartBufferIndex++] = inChar;
+        }
       }
     }
     
@@ -281,11 +331,69 @@ void i2cTask(void *parameter) {
   const int I2C_SLAVE_ADDR = 0x08; // Example slave address
   uint8_t requestCount = 0;
   TickType_t xLastWakeTime;
-  const TickType_t xFrequency = pdMS_TO_TICKS(1000); // 1 second interval
+  const TickType_t xFrequency = pdMS_TO_TICKS(100); // 100ms interval for more responsive feedback
+  float feedbackData = 0.0;
   
   xLastWakeTime = xTaskGetTickCount();
   
   for(;;) {
+    bool dataReceived = false;
+    
+    // Check if feedback data is available in the queue
+    if (feedbackQueue != NULL) {
+      if (xQueueReceive(feedbackQueue, &feedbackData, 0) == pdTRUE) {
+        dataReceived = true;
+        Serial.print("[I2C] Received feedback value: ");
+        Serial.println(feedbackData);
+      }
+    }
+    
+    // Send data to I2C devices based on new feedback
+    if (dataReceived) {
+      // Map feedback value to haptic motor intensity
+      // Assuming feedback is normalized between -1.0 and 1.0
+      int hapticIntensity = abs(feedbackData * 100); // Scale to 0-100
+      if (hapticIntensity > 100) hapticIntensity = 100;
+      
+      // Send to haptic motor driver
+      Wire.beginTransmission(I2C_HAPTIC_ADDR);
+      Wire.write(0x01); // Command byte (example: intensity register)
+      Wire.write(hapticIntensity);
+      uint8_t hapticResult = Wire.endTransmission();
+      
+      Serial.print("[I2C] Haptic intensity set to: ");
+      Serial.print(hapticIntensity);
+      Serial.print(" - Result: ");
+      Serial.println((hapticResult == 0) ? "Success" : "Failed");
+      
+      // For speaker - different mapping logic
+      // For example, positive values play one sound, negative values another
+      Wire.beginTransmission(I2C_SPEAKER_ADDR);
+      Wire.write(0x02); // Command byte (example: sound select register)
+      
+      if (feedbackData > 0) {
+        // Positive feedback - select sound 1 with intensity proportional to value
+        uint8_t soundIntensity = feedbackData * 127;
+        Wire.write(0x01);  // Sound ID 1
+        Wire.write(soundIntensity);
+      } else if (feedbackData < 0) {
+        // Negative feedback - select sound 2 with intensity proportional to abs value
+        uint8_t soundIntensity = abs(feedbackData) * 127;
+        Wire.write(0x02);  // Sound ID 2
+        Wire.write(soundIntensity);
+      } else {
+        // Zero - mute
+        Wire.write(0x00);  // No sound
+        Wire.write(0x00);  // Zero intensity
+      }
+      
+      uint8_t speakerResult = Wire.endTransmission();
+      
+      Serial.print("[I2C] Speaker command sent - Result: ");
+      Serial.println((speakerResult == 0) ? "Success" : "Failed");
+    }
+    
+    // Standard I2C operation for sending data to target (if needed)
     if (!webServerActive && numbersCount > 0) {
       // Only start I2C communications after web server is done
       
@@ -301,23 +409,25 @@ void i2cTask(void *parameter) {
         Wire.write((uint8_t)((valueToSend >> 8) & 0xFF));  // High byte
         uint8_t result = Wire.endTransmission();
         
-        Serial.print("[I2C Core ");
-        Serial.print(xPortGetCoreID());
-        Serial.print("] Sent value ");
-        Serial.print(valueToSend);
-        Serial.print(" to slave (");
-        Serial.print(currentIdx + 1);
-        Serial.print("/");
-        Serial.print(numbersCount);
-        Serial.print(") - Result: ");
-        
-        switch(result) {
-          case 0: Serial.println("Success"); break;
-          case 1: Serial.println("Data too long"); break;
-          case 2: Serial.println("NACK on address"); break;
-          case 3: Serial.println("NACK on data"); break;
-          case 4: Serial.println("Other error"); break;
-          default: Serial.println("Unknown error"); break;
+        if (requestCount % 10 == 0) {  // Only print status every 10 cycles to reduce serial output
+          Serial.print("[I2C Core ");
+          Serial.print(xPortGetCoreID());
+          Serial.print("] Sent value ");
+          Serial.print(valueToSend);
+          Serial.print(" to slave (");
+          Serial.print(currentIdx + 1);
+          Serial.print("/");
+          Serial.print(numbersCount);
+          Serial.print(") - Result: ");
+          
+          switch(result) {
+            case 0: Serial.println("Success"); break;
+            case 1: Serial.println("Data too long"); break;
+            case 2: Serial.println("NACK on address"); break;
+            case 3: Serial.println("NACK on data"); break;
+            case 4: Serial.println("Other error"); break;
+            default: Serial.println("Unknown error"); break;
+          }
         }
         
         requestCount++;
