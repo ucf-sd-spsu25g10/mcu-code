@@ -333,6 +333,11 @@ void i2cTask(void *parameter) {
   TickType_t xLastWakeTime;
   const TickType_t xFrequency = pdMS_TO_TICKS(100); // 100ms interval for more responsive feedback
   float feedbackData = 0.0;
+
+  // Define haptic motor addresses for left and right
+  const uint8_t I2C_LEFT_HAPTIC_ADDR = 0x5A;  // Left haptic motor address
+  const uint8_t I2C_RIGHT_HAPTIC_ADDR = 0x5B; // Right haptic motor address
+  const int DEADZONE = 5; // Dead zone threshold (±5)
   
   xLastWakeTime = xTaskGetTickCount();
   
@@ -350,41 +355,64 @@ void i2cTask(void *parameter) {
     
     // Send data to I2C devices based on new feedback
     if (dataReceived) {
-      // Map feedback value to haptic motor intensity
-      // Assuming feedback is normalized between -1.0 and 1.0
-      int hapticIntensity = abs(feedbackData * 100); // Scale to 0-100
-      if (hapticIntensity > 100) hapticIntensity = 100;
+      // Process values from -100 to 100
+      int feedbackInt = (int)feedbackData;
       
-      // Send to haptic motor driver
-      Wire.beginTransmission(I2C_HAPTIC_ADDR);
+      // Calculate left and right haptic intensities
+      uint8_t leftIntensity = 0;
+      uint8_t rightIntensity = 0;
+      
+      if (feedbackInt < -DEADZONE) {
+        // Activate left motor, scale from -100 to 0-100 range
+        leftIntensity = map(abs(feedbackInt), DEADZONE, 100, 0, 100);
+        if (leftIntensity > 100) leftIntensity = 100;
+      } 
+      else if (feedbackInt > DEADZONE) {
+        // Activate right motor, already in 0-100 range
+        rightIntensity = map(feedbackInt, DEADZONE, 100, 0, 100);
+        if (rightIntensity > 100) rightIntensity = 100;
+      }
+      // Between -DEADZONE and +DEADZONE, both motors remain at 0
+      
+      // Send to left haptic motor driver
+      Wire.beginTransmission(I2C_LEFT_HAPTIC_ADDR);
       Wire.write(0x01); // Command byte (example: intensity register)
-      Wire.write(hapticIntensity);
-      uint8_t hapticResult = Wire.endTransmission();
+      Wire.write(leftIntensity);
+      uint8_t leftResult = Wire.endTransmission();
       
-      Serial.print("[I2C] Haptic intensity set to: ");
-      Serial.print(hapticIntensity);
-      Serial.print(" - Result: ");
-      Serial.println((hapticResult == 0) ? "Success" : "Failed");
+      // Send to right haptic motor driver
+      Wire.beginTransmission(I2C_RIGHT_HAPTIC_ADDR);
+      Wire.write(0x01); // Command byte (example: intensity register)
+      Wire.write(rightIntensity);
+      uint8_t rightResult = Wire.endTransmission();
+      
+      Serial.print("[I2C] Haptic motors: Left=");
+      Serial.print(leftIntensity);
+      Serial.print("%, Right=");
+      Serial.print(rightIntensity);
+      Serial.print("% - Result: Left ");
+      Serial.print((leftResult == 0) ? "Success" : "Failed");
+      Serial.print(", Right ");
+      Serial.println((rightResult == 0) ? "Success" : "Failed");
       
       // For speaker - different mapping logic
-      // For example, positive values play one sound, negative values another
       Wire.beginTransmission(I2C_SPEAKER_ADDR);
       Wire.write(0x02); // Command byte (example: sound select register)
       
-      if (feedbackData > 0) {
-        // Positive feedback - select sound 1 with intensity proportional to value
-        uint8_t soundIntensity = feedbackData * 127;
-        Wire.write(0x01);  // Sound ID 1
-        Wire.write(soundIntensity);
-      } else if (feedbackData < 0) {
-        // Negative feedback - select sound 2 with intensity proportional to abs value
-        uint8_t soundIntensity = abs(feedbackData) * 127;
-        Wire.write(0x02);  // Sound ID 2
-        Wire.write(soundIntensity);
-      } else {
-        // Zero - mute
+      if (abs(feedbackInt) < DEADZONE) {
+        // In dead zone - mute
         Wire.write(0x00);  // No sound
         Wire.write(0x00);  // Zero intensity
+      } else if (feedbackInt < 0) {
+        // Negative feedback - select sound 1 with intensity proportional to abs value
+        uint8_t soundIntensity = map(abs(feedbackInt), DEADZONE, 100, 0, 127);
+        Wire.write(0x01);  // Sound ID 1 (left feedback)
+        Wire.write(soundIntensity);
+      } else {
+        // Positive feedback - select sound 2 with intensity proportional to value
+        uint8_t soundIntensity = map(feedbackInt, DEADZONE, 100, 0, 127);
+        Wire.write(0x02);  // Sound ID 2 (right feedback)
+        Wire.write(soundIntensity);
       }
       
       uint8_t speakerResult = Wire.endTransmission();
