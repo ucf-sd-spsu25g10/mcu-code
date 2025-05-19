@@ -213,31 +213,22 @@ void uartTask(void *parameter) {
     } else {
       // Server is done, stream numbers over UART
       if (!streamingStarted) {
-        Serial.println("\n----- STREAMING RECEIVED NUMBERS OVER UART -----");
-        streamingStarted = true;
-      }
-      
-      // Stream one number per cycle over UART
-      if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
-        if (currentIndex < numbersCount) {
-          Serial.print("Number ");
-          Serial.print(currentIndex + 1);
-          Serial.print("/");
-          Serial.print(numbersCount);
-          Serial.print(": ");
-          Serial.println(receivedNumbers[currentIndex]);
-          currentIndex++;
-        }
-        else if (currentIndex == numbersCount && numbersCount > 0) {
-          Serial.println("----- ALL NUMBERS STREAMED -----");
-          // Reset to start streaming again after a delay
-          if (currentIndex >= numbersCount + 10) { // Wait 10 cycles before repeating
-            currentIndex = 0;
-          } else {
-            currentIndex++;
+        //Serial.println("\n----- STREAMING RECEIVED NUMBERS OVER UART -----");
+        
+        // Output all numbers as comma-separated string
+        if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
+          for (int i = 0; i < numbersCount; i++) {
+            Serial.print(receivedNumbers[i]);
+            if (i < numbersCount - 1) {
+              Serial.print(",");
+            }
           }
+          Serial.println(); // End the line
+          xSemaphoreGive(xMutex);
         }
-        xSemaphoreGive(xMutex);
+        
+        streamingStarted = true;
+        currentIndex = numbersCount; // Skip to end to avoid repeating
       }
       
       // Check for incoming UART data from target
@@ -353,7 +344,7 @@ void i2cTask(void *parameter) {
     
     // Send data to I2C devices based on new feedback
     if (dataReceived) {
-      // Process values from -100 to 100
+      // Process values from -255 to 255
       int feedbackInt = (int)feedbackData;
       
       // Calculate left and right haptic intensities
@@ -361,13 +352,13 @@ void i2cTask(void *parameter) {
       uint8_t rightIntensity = 0;
       
       if (feedbackInt < -DEADZONE) {
-        // Activate left motor, scale from -100 to 0-100 range
-        leftIntensity = map(abs(feedbackInt), DEADZONE, 100, 0, 100);
+        // Activate left motor, scale from -255 to 0-100 range
+        leftIntensity = map(abs(feedbackInt), DEADZONE, 255, 0, 100);
         if (leftIntensity > 100) leftIntensity = 100;
       } 
       else if (feedbackInt > DEADZONE) {
-        // Activate right motor, already in 0-100 range
-        rightIntensity = map(feedbackInt, DEADZONE, 100, 0, 100);
+        // Activate right motor, scale from 0-255 to 0-100 range
+        rightIntensity = map(feedbackInt, DEADZONE, 255, 0, 100);
         if (rightIntensity > 100) rightIntensity = 100;
       }
       // Between -DEADZONE and +DEADZONE, both motors remain at 0
