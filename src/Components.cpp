@@ -26,16 +26,6 @@ WebServer server(80);
 #define I2C_SDA 21
 #define I2C_SCL 22
 
-// Define PWM pins and configuration
-#define PWM_PIN 11        // PWM output pin
-#define PWM_CHANNEL 0    // PWM channel (ESP32 has 16 channels)
-#define PWM_RESOLUTION 8 // 8-bit resolution (0-255)
-#define PWM_FREQ_HZ 10   // Initial frequency 10Hz
-#define PWM_DUTY_PCT 50  // Initial duty cycle 50%
-
-// Define timing variables
-bool ledState = false;
-
 // Array to store received numbers
 const int MAX_NUMBERS = 20;
 int receivedNumbers[MAX_NUMBERS];
@@ -52,10 +42,6 @@ TaskHandle_t pwmTaskHandle = NULL; // Add new PWM task handle
 
 // Add a flag for web server status
 volatile bool webServerActive = true;
-
-// Add PWM configuration variables
-int pwmFrequency = PWM_FREQ_HZ;    // PWM frequency in Hz
-int pwmDutyCycle = PWM_DUTY_PCT;   // PWM duty cycle percentage
 
 // Add UART communication parameters
 #define UART_BUFFER_SIZE 64
@@ -77,12 +63,6 @@ QueueHandle_t feedbackQueue;
 void handleRoot() {
   String html = "<html><body>";
   html += "<h1>ESP32 API Server</h1>";
-  html += "<p>LED is currently: ";
-  
-  if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
-    html += (ledState ? "ON" : "OFF");
-    xSemaphoreGive(xMutex);
-  }
   
   html += "</p>";
   html += "<p>Send a POST request to /api/cartList with a JSON array of numbers</p>";
@@ -104,12 +84,6 @@ void handleRoot() {
 }
 
 void handleToggle() {
-  if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
-    ledState = !ledState;
-    digitalWrite(CONFIG_BLINK_GPIO, ledState);
-    xSemaphoreGive(xMutex);
-  }
-  
   server.sendHeader("Location", "/");
   server.send(303);  // Redirect back to root
 }
@@ -145,23 +119,12 @@ void handleNumbersApi() {
   
   // Extract the numbers from the document
   JsonArray array = doc.as<JsonArray>();
-  
-  if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
-    // Reset numbers array
-    numbersCount = 0;
     
-    // Store each number
-    for (JsonVariant value : array) {
-      if (value.is<int>() && numbersCount < MAX_NUMBERS) {
-        receivedNumbers[numbersCount++] = value.as<int>();
-      }
+  // Store each number
+  for (JsonVariant value : array) {
+    if (value.is<int>() && numbersCount < MAX_NUMBERS) {
+      receivedNumbers[numbersCount++] = value.as<int>();
     }
-    
-    // Toggle LED to indicate successful reception
-    ledState = !ledState;
-    digitalWrite(CONFIG_BLINK_GPIO, ledState);
-    
-    xSemaphoreGive(xMutex);
   }
   
   // Send response
@@ -202,12 +165,6 @@ void uartTask(void *parameter) {
   feedbackQueue = xQueueCreate(QUEUE_LENGTH, QUEUE_ITEM_SIZE);
   
   for (;;) {
-    // Toggle LED
-    if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
-      digitalWrite(CONFIG_BLINK_GPIO, !digitalRead(CONFIG_BLINK_GPIO));
-      xSemaphoreGive(xMutex);
-    }
-    
     if (webServerActive) {
       Serial.println("Server running, IP: " + WiFi.localIP().toString());
     } else {
@@ -456,84 +413,12 @@ void i2cTask(void *parameter) {
   }
 }
 
-// PWM task - drives PWM output with configurable rate and duty cycle
-void pwmTask(void *parameter) {
-  // Initialize PWM on designated channel
-  ledcSetup(PWM_CHANNEL, pwmFrequency, PWM_RESOLUTION);
-  ledcAttachPin(PWM_PIN, PWM_CHANNEL);
-  
-  // Calculate initial duty value (for 8-bit resolution)
-  uint32_t dutyCycleValue = (pwmDutyCycle * 255) / 100;
-  ledcWrite(PWM_CHANNEL, dutyCycleValue);
-  
-  Serial.print("PWM initialized on pin ");
-  Serial.print(PWM_PIN);
-  Serial.print(" with frequency ");
-  Serial.print(pwmFrequency);
-  Serial.print(" Hz, duty cycle ");
-  Serial.print(pwmDutyCycle);
-  Serial.print("% (");
-  Serial.print(dutyCycleValue);
-  Serial.println("/255)");
-  
-  TickType_t xLastWakeTime = xTaskGetTickCount();
-  const TickType_t xFrequency = pdMS_TO_TICKS(5000); // Status update every 5 seconds
-  
-  for (;;) {
-    // After JSON received, you can optionally modify PWM based on received values
-    if (!webServerActive && numbersCount > 0) {
-      if (xSemaphoreTake(xMutex, portMAX_DELAY) == pdTRUE) {
-        // Example: Use the first number to set frequency if it's within valid range
-        if (numbersCount > 0 && receivedNumbers[0] >= 1 && receivedNumbers[0] <= 1000) {
-          int newFreq = receivedNumbers[0];
-          if (newFreq != pwmFrequency) {
-            pwmFrequency = newFreq;
-            ledcChangeFrequency(PWM_CHANNEL, pwmFrequency, PWM_RESOLUTION);
-            Serial.print("[PWM] Frequency changed to ");
-            Serial.print(pwmFrequency);
-            Serial.println(" Hz");
-          }
-        }
-        
-        // Use second number for duty cycle if available and valid
-        if (numbersCount > 1 && receivedNumbers[1] >= 0 && receivedNumbers[1] <= 100) {
-          int newDuty = receivedNumbers[1];
-          if (newDuty != pwmDutyCycle) {
-            pwmDutyCycle = newDuty;
-            dutyCycleValue = (pwmDutyCycle * 255) / 100;
-            ledcWrite(PWM_CHANNEL, dutyCycleValue);
-            Serial.print("[PWM] Duty cycle changed to ");
-            Serial.print(pwmDutyCycle);
-            Serial.println("%");
-          }
-        }
-        xSemaphoreGive(xMutex);
-      }
-    }
-    
-    // Print periodic status message
-    Serial.print("[PWM Core ");
-    Serial.print(xPortGetCoreID());
-    Serial.print("] Running at ");
-    Serial.print(pwmFrequency);
-    Serial.print(" Hz with ");
-    Serial.print(pwmDutyCycle);
-    Serial.println("% duty cycle");
-    
-    // Wait for next update cycle
-    vTaskDelayUntil(&xLastWakeTime, xFrequency);
-  }
-}
-
 void setup() {
   Serial.begin(115200);
   Serial.println("ESP32 Blink Example with Web Server");
   
   // Create mutex for protecting shared resources
   xMutex = xSemaphoreCreateMutex();
-  
-  // Setup LED pin
-  pinMode(CONFIG_BLINK_GPIO, OUTPUT);
   
   // Create RTOS tasks
   xTaskCreatePinnedToCore(
@@ -563,16 +448,6 @@ void setup() {
     1,                  // Priority at which the task is created
     &i2cTaskHandle,     // Used to pass out the created task's handle
     1                   // Run on core 1
-  );
-
-  xTaskCreatePinnedToCore(
-    pwmTask,            // Function that implements the task
-    "PWMTask",          // Text name for the task
-    2048,               // Stack size in words, not bytes
-    NULL,               // Parameter passed into the task
-    1,                  // Priority at which the task is created
-    &pwmTaskHandle,     // Used to pass out the created task's handle
-    0                   // Run on core 0
   );
 }
 
