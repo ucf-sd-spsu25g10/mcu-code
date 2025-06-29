@@ -1,1 +1,1 @@
-idf_component_register(SRCS "Components.cpp")
+idf_component_register(SRCS "main.cpp") 

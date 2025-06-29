@@ -1,0 +1,6 @@
+## IDF Component Manager Manifest File
+dependencies:
+  # Required IDF version (adjust if your project uses a specific older/newer IDF version)
+  idf: ">=4.4.0" # Example: compatible with IDF v4.4.0 and newer
+  # DRV2605 component
+  espp/drv2605: "^1.0.9" # Use the latest stable version found on the registry
