@@ -1,3 +1,7 @@
+/* NAVIS MCU Code - UCF Senior Design Project - ECE Group 10 - Spring 2025 / Summer 2025
+  Maintained by Michael Castglia with contributions from Pavan Senthil and Aden McKinney.
+*/
+
 // C++ headers
 #include <inttypes.h>
 #include <string.h>
