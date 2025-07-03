@@ -29,13 +29,14 @@ extern "C" {
 #include "driver/uart.h"
 #include "rom/ets_sys.h"
 
+#include "navigate_to.h"
+#include "navigation_complete.h"
+#include "turn.h"
 #include "left.h"
 #include "right.h"
 #include "around.h"
 #include "go_straight.h"
 #include "meters.h"
-#include "navigate_to.h"
-#include "navigation_complete.h"
 #include "one.h"
 #include "two.h"
 #include "three.h"
@@ -45,10 +46,10 @@ extern "C" {
 #include "seven.h"
 #include "eight.h"
 #include "nine.h"
-#include "turn.h"
+#include "ten.h"
 #include "item_is_on.h"
-#include "shelf.h"
 #include "aisle.h"
+#include "shelf.h"
 
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -86,7 +87,8 @@ const int MAX_NUMBERS = 20;
 int receivedNumbers[MAX_NUMBERS];
 int numbersCount = 0;
 SemaphoreHandle_t xMutex = NULL;
-QueueHandle_t feedbackQueue;
+QueueHandle_t hapticQueue;
+QueueHandle_t audioQueue;
 volatile bool webServerActive = true;
 
 // UART settings
@@ -302,10 +304,21 @@ void uartTask(void *parameter) {
             int len = uart_read_bytes(UART_NUM, data, UART_BUFFER_SIZE - 1, 20 / portTICK_PERIOD_MS);
             if (len > 0) {
                 data[len] = '\0';
-                float receivedValue = strtof((const char*)data, NULL);
-                printf("Received feedback value via UART: %f\n", receivedValue);
-                if (feedbackQueue != NULL) {
-                    xQueueSend(feedbackQueue, &receivedValue, pdMS_TO_TICKS(10));
+                if (data[0] == 'h') {
+                    float value = strtof((const char *)(data + 1), NULL);
+                    printf("Received haptic command: %s, value: %f\n", (const char*)data, value);
+                    if (hapticQueue != NULL) {
+                        xQueueSend(hapticQueue, &value, pdMS_TO_TICKS(10));
+                    }
+                } else if (data[0] == 'a') {
+                    int value = atoi((const char *)(data + 1));
+                    printf("Received audio command: %s, value: %d\n", (const char*)data, value);
+                    if (audioQueue != NULL) {
+                        xQueueSend(audioQueue, &value, pdMS_TO_TICKS(10));
+                    }
+                } else {
+                    float value = strtof((const char *)data, NULL);
+                    printf("Received unknown feedback value via UART: %f\n", value);
                 }
             }
         }
@@ -381,10 +394,7 @@ void haptic_task(void *pvParameters) {
     const int DEADZONE = 5;
 
     while (1) {
-        playEffect(haptic1.get(), HAPTIC_EN1_PIN, STRONG_BUZZ_EFFECT, EFFECT_DURATION_MS);
-        vTaskDelay(pdMS_TO_TICKS(1000)); // Delay to allow the effect to play
-        
-        if (xQueueReceive(feedbackQueue, &feedbackData, pdMS_TO_TICKS(10)) == pdTRUE) {
+        if (xQueueReceive(hapticQueue, &feedbackData, pdMS_TO_TICKS(10)) == pdTRUE) {
             printf("[HAPTIC] Received feedback value: %f\n", feedbackData);
             int feedbackInt = (int)feedbackData;
             
@@ -401,21 +411,17 @@ static void dac_audio_task(void *pvParameters) {
     dac_continuous_handle_t dac_handle = (dac_continuous_handle_t)pvParameters;
     printf("DAC audio task started\n");
 
-    size_t audio_sizes[] = { sizeof(left), sizeof(right), sizeof(hleft), sizeof(hright) };
-    uint8_t *audio_tracks[] = { (uint8_t *)left, (uint8_t *)right, (uint8_t *)hleft, (uint8_t *)hright };
-    size_t num_tracks = 4;
-    uint32_t cnt = 1;
+    size_t audio_sizes[] = { sizeof(navigate_to), sizeof(navigation_complete), sizeof(turn), sizeof(left), sizeof(right), sizeof(around), sizeof(go_straight), sizeof(meters), sizeof(one), sizeof(two), sizeof(three), sizeof(four), sizeof(five), sizeof(six), sizeof(seven), sizeof(eight), sizeof(nine), sizeof(ten), sizeof(item_is_on), sizeof(aisle), sizeof(shelf) };
+    uint8_t *audio_tracks[] = { (uint8_t *)navigate_to, (uint8_t *)navigation_complete, (uint8_t *)turn, (uint8_t *)left, (uint8_t *)right, (uint8_t *)around, (uint8_t *)go_straight, (uint8_t *)meters, (uint8_t *)one, (uint8_t *)two, (uint8_t *)three, (uint8_t *)four, (uint8_t *)five, (uint8_t *)six, (uint8_t *)seven, (uint8_t *)eight, (uint8_t *)nine, (uint8_t *)ten, (uint8_t *)item_is_on, (uint8_t *)aisle, (uint8_t *)shelf };
+    size_t num_tracks = sizeof(audio_tracks) / sizeof(audio_tracks[0]);
+    int audio_index;
 
     while(1) {
-        if (!webServerActive) { // Only play audio after web server is done
-            for (size_t t = 0; t < num_tracks; ++t) {
-                printf("Play count: %" PRIu32 " Track: %zu", cnt, t + 1);
-                ESP_ERROR_CHECK(dac_continuous_write(dac_handle, audio_tracks[t], audio_sizes[t], NULL, -1));
-                vTaskDelay(pdMS_TO_TICKS(1000));
+        if (xQueueReceive(audioQueue, &audio_index, portMAX_DELAY) == pdTRUE) {
+            if (audio_index >= 0 && audio_index < num_tracks) {
+                printf("Playing audio track: %d\n", audio_index);
+                ESP_ERROR_CHECK(dac_continuous_write(dac_handle, audio_tracks[audio_index], audio_sizes[audio_index], NULL, -1));
             }
-            cnt++;
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(100)); // Wait while web server is active
         }
     }
 }
@@ -441,7 +447,8 @@ extern "C" void app_main(void)
 
     // Create mutex and queue
     xMutex = xSemaphoreCreateMutex();
-    feedbackQueue = xQueueCreate(10, sizeof(float));
+    hapticQueue = xQueueCreate(10, sizeof(float));
+    audioQueue = xQueueCreate(10, sizeof(int));
 
     // Initialize I2C
     i2c_config_t conf = {
