@@ -28,10 +28,28 @@ extern "C" {
 #include "driver/i2c.h"
 #include "driver/uart.h"
 #include "rom/ets_sys.h"
+
 #include "left.h"
 #include "right.h"
-#include "hleft.h"
-#include "hright.h"
+#include "around.h"
+#include "go_straight.h"
+#include "meters.h"
+#include "navigate_to.h"
+#include "navigation_complete.h"
+#include "one.h"
+#include "two.h"
+#include "three.h"
+#include "four.h"
+#include "five.h"
+#include "six.h"
+#include "seven.h"
+#include "eight.h"
+#include "nine.h"
+#include "turn.h"
+#include "item_is_on.h"
+#include "shelf.h"
+#include "aisle.h"
+
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -363,6 +381,9 @@ void haptic_task(void *pvParameters) {
     const int DEADZONE = 5;
 
     while (1) {
+        playEffect(haptic1.get(), HAPTIC_EN1_PIN, STRONG_BUZZ_EFFECT, EFFECT_DURATION_MS);
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Delay to allow the effect to play
+        
         if (xQueueReceive(feedbackQueue, &feedbackData, pdMS_TO_TICKS(10)) == pdTRUE) {
             printf("[HAPTIC] Received feedback value: %f\n", feedbackData);
             int feedbackInt = (int)feedbackData;
