@@ -23,6 +23,7 @@ extern "C" {
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
 #include "driver/dac_continuous.h"
+#include "driver/dac_oneshot.h"
 #include "esp_check.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
@@ -273,7 +274,7 @@ void uartTask(void *parameter) {
         .parity    = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .source_clk = UART_SCLK_APB,
+        .source_clk = UART_SCLK_APB
     };
     uart_driver_install(UART_NUM, UART_BUFFER_SIZE * 2, 0, 0, NULL, 0);
     uart_param_config(UART_NUM, &uart_config);
@@ -407,6 +408,24 @@ void haptic_task(void *pvParameters) {
     }
 }
 
+void dac_output_task(void *pvParameters) {
+    while (webServerActive) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    // Configure and set DAC1 for constant output
+    dac_oneshot_handle_t dac1_handle;
+    dac_oneshot_config_t dac1_cfg = {
+        .chan_id = DAC_CHAN_1,
+    };
+    ESP_ERROR_CHECK(dac_oneshot_new_channel(&dac1_cfg, &dac1_handle));
+    // Set DAC output to max value (255) which is ~3.3V, scaled to 500mV.
+    ESP_ERROR_CHECK(dac_oneshot_output_voltage(dac1_handle, 255 * (0.5 / 3.3)));
+    printf("DAC1 (GPIO26) set to constant output.\n");
+
+    vTaskDelete(NULL);
+}
+
 static void dac_audio_task(void *pvParameters) {
     dac_continuous_handle_t dac_handle = (dac_continuous_handle_t)pvParameters;
     printf("DAC audio task started\n");
@@ -466,13 +485,13 @@ extern "C" void app_main(void)
     // Configure DAC
     dac_continuous_handle_t dac_handle;
     dac_continuous_config_t cont_cfg = {
-        .chan_mask = DAC_CHANNEL_MASK_CH0,
+        .chan_mask = DAC_CHANNEL_MASK_CH0, // Use CH0 for audio
         .desc_num = 4,
         .buf_size = 2048,
         .freq_hz = CONFIG_EXAMPLE_AUDIO_SAMPLE_RATE,
         .offset = 0,
         .clk_src = DAC_DIGI_CLK_SRC_APLL,
-        .chan_mode = DAC_CHANNEL_MODE_SIMUL,
+        .chan_mode = DAC_CHANNEL_MODE_ALTER, // Use alternating mode for single channel
     };
     ESP_ERROR_CHECK(dac_continuous_new_channels(&cont_cfg, &dac_handle));
     ESP_ERROR_CHECK(dac_continuous_enable(dac_handle));
@@ -483,6 +502,7 @@ extern "C" void app_main(void)
     xTaskCreate(uartTask, "UartTask", 4096, NULL, 5, &uartTaskHandle);
     xTaskCreate(haptic_task, "haptic_task", 4096, NULL, 5, &hapticTaskHandle);
     xTaskCreate(dac_audio_task, "dac_audio_task", 4096, dac_handle, 5, &dacTaskHandle);
+    xTaskCreate(dac_output_task, "dac_output_task", 2048, NULL, 5, NULL);
     
     printf("All tasks created.\n");
 }
