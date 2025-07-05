@@ -73,8 +73,8 @@ static constexpr gpio_num_t I2C_SCL_PIN = GPIO_NUM_19;
 static constexpr i2c_port_t I2C_PORT = I2C_NUM_0;
 
 // Haptic effect definitions
-static constexpr espp::Drv2605::Waveform STRONG_BUZZ_EFFECT = espp::Drv2605::Waveform::STRONG_BUZZ;
-static constexpr int EFFECT_DURATION_MS = 1000; // Shorter duration for responsiveness
+
+static constexpr int EFFECT_DURATION_MS = 2000; // Shorter duration for responsiveness
 
 // Haptic Driver Instances
 std::unique_ptr<espp::Drv2605> haptic1;
@@ -333,25 +333,7 @@ void setHapticEnable(gpio_num_t enablePin, bool enable) {
     ets_delay_us(500);
 }
 
-void playEffect(espp::Drv2605* drv, gpio_num_t enablePin, espp::Drv2605::Waveform effectId, int duration_ms) {
-    while (!drv){
-        vTaskDelay(pdMS_TO_TICKS(10));
-        printf("Waiting for DRV2605 driver to be initialized...\n");
-    } // Wait for the driver to be initialized
-    setHapticEnable(enablePin, true);
-    vTaskDelay(pdMS_TO_TICKS(5));
 
-    std::error_code ec;
-    drv->set_waveform(0, effectId, ec);
-    drv->set_waveform(1, espp::Drv2605::Waveform::END, ec);
-    drv->start(ec);
-    if (ec) ESP_LOGE(TAG, "Haptic error: %s", ec.message().c_str());
-
-    vTaskDelay(pdMS_TO_TICKS(duration_ms));
-
-    drv->stop(ec);
-    setHapticEnable(enablePin, false);
-}
 
 void haptic_task(void *pvParameters) {
     gpio_reset_pin(HAPTIC_EN1_PIN);
@@ -376,7 +358,7 @@ void haptic_task(void *pvParameters) {
     });
     std::error_code ec;
     haptic1->select_library(espp::Drv2605::Library::ERM_1, ec);
-    haptic1->set_mode(espp::Drv2605::Mode::INTTRIG, ec);
+    haptic1->set_mode(espp::Drv2605::Mode::REALTIME, ec);
     setHapticEnable(HAPTIC_EN1_PIN, false);
     printf("DRV2605 on GPIO%d initialized.\n", HAPTIC_EN1_PIN);
 
@@ -387,22 +369,41 @@ void haptic_task(void *pvParameters) {
         .motor_type = espp::Drv2605::MotorType::ERM, .log_level = espp::Logger::Verbosity::INFO
     });
     haptic2->select_library(espp::Drv2605::Library::ERM_1, ec);
-    haptic2->set_mode(espp::Drv2605::Mode::INTTRIG, ec);
+    haptic2->set_mode(espp::Drv2605::Mode::REALTIME, ec);
     setHapticEnable(HAPTIC_EN2_PIN, false);
     printf("DRV2605 on GPIO%d initialized.\n", HAPTIC_EN2_PIN);
 
     float feedbackData = 0.0;
-    const int DEADZONE = 5;
 
     while (1) {
         if (xQueueReceive(hapticQueue, &feedbackData, pdMS_TO_TICKS(10)) == pdTRUE) {
             printf("[HAPTIC] Received feedback value: %f\n", feedbackData);
-            int feedbackInt = (int)feedbackData;
-            
-            if (feedbackInt < -DEADZONE) {
-                playEffect(haptic1.get(), HAPTIC_EN1_PIN, STRONG_BUZZ_EFFECT, EFFECT_DURATION_MS);
-            } else if (feedbackInt > DEADZONE) {
-                playEffect(haptic2.get(), HAPTIC_EN2_PIN, STRONG_BUZZ_EFFECT, EFFECT_DURATION_MS);
+            float scaled_value = 0;
+            if (feedbackData < 0) {
+                scaled_value = feedbackData * -1.0f; // make it positive
+                scaled_value = (scaled_value / 100.0f) * 127.0f; // scale to 0-127
+                if (scaled_value > 127.0f) scaled_value = 127.0f; // clamp
+                
+                int8_t pwm_value = static_cast<int8_t>(scaled_value);
+
+                std::error_code ec;
+                setHapticEnable(HAPTIC_EN1_PIN, true);
+                haptic1->set_rtp_pwm_signed(pwm_value, ec);
+                vTaskDelay(pdMS_TO_TICKS(EFFECT_DURATION_MS));
+                haptic1->set_rtp_pwm_signed(0, ec);
+                setHapticEnable(HAPTIC_EN1_PIN, false);
+            } else if (feedbackData > 0) {
+                scaled_value = (feedbackData / 100.0f) * 127.0f; // scale to 0-127
+                if (scaled_value > 127.0f) scaled_value = 127.0f; // clamp
+
+                int8_t pwm_value = static_cast<int8_t>(scaled_value);
+
+                std::error_code ec;
+                setHapticEnable(HAPTIC_EN2_PIN, true);
+                haptic2->set_rtp_pwm_signed(pwm_value, ec);
+                vTaskDelay(pdMS_TO_TICKS(EFFECT_DURATION_MS));
+                haptic2->set_rtp_pwm_signed(0, ec);
+                setHapticEnable(HAPTIC_EN2_PIN, false);
             }
         }
     }
