@@ -383,6 +383,7 @@ void haptic_task(void *pvParameters) {
                 scaled_value = feedbackData * -1.0f; // make it positive
                 scaled_value = (scaled_value / 100.0f) * 127.0f; // scale to 0-127
                 if (scaled_value > 127.0f) scaled_value = 127.0f; // clamp
+                if (scaled_value < 5.0f) scaled_value = 0.0f; // Deadzone
                 
                 int8_t pwm_value = static_cast<int8_t>(scaled_value);
 
@@ -395,6 +396,7 @@ void haptic_task(void *pvParameters) {
             } else if (feedbackData > 0) {
                 scaled_value = (feedbackData / 100.0f) * 127.0f; // scale to 0-127
                 if (scaled_value > 127.0f) scaled_value = 127.0f; // clamp
+                if (scaled_value < 5.0f) scaled_value = 0.0f; // Deadzone
 
                 int8_t pwm_value = static_cast<int8_t>(scaled_value);
 
