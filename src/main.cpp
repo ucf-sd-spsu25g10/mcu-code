@@ -71,6 +71,8 @@ static constexpr gpio_num_t HAPTIC_EN2_PIN = GPIO_NUM_17;
 static constexpr gpio_num_t I2C_SDA_PIN = GPIO_NUM_18;
 static constexpr gpio_num_t I2C_SCL_PIN = GPIO_NUM_19;
 static constexpr i2c_port_t I2C_PORT = I2C_NUM_0;
+static constexpr gpio_num_t AUDIO_EN_PIN = GPIO_NUM_33; // GPIO pin to enable audio DAC
+static constexpr gpio_num_t LED_PIN = GPIO_NUM_27; // GPIO pin for LED indicator
 
 // Haptic effect definitions
 
@@ -113,13 +115,13 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         if (webServerActive) { // Only retry if web server is still active
             esp_wifi_connect();
-            printf("retry to connect to the AP\n");
+            ESP_LOGI(TAG, "retry to connect to the AP");
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        printf("got ip:\n" IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "got ip: " IPSTR, IP2STR(&event->ip_info.ip));
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
@@ -152,7 +154,7 @@ esp_err_t cartlist_post_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
     content[req->content_len] = '\0';
-    printf("Received POST data: %s\n", content);
+    ESP_LOGI(TAG, "Received POST data: %s", content);
 
     cJSON *root = cJSON_Parse(content);
     if (root == NULL) {
@@ -184,7 +186,7 @@ esp_err_t cartlist_post_handler(httpd_req_t *req) {
     const char *response = "{\"status\":\"success\"}";
     httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
     webServerActive = false;
-    printf("Valid JSON received. Web server will disconnect.\n");
+    ESP_LOGI(TAG, "Valid JSON received. Web server will disconnect.");
     return ESP_OK;
 }
 
@@ -216,13 +218,13 @@ void webServerTask(void *parameter) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    printf("Waiting for WiFi connection...\n");
+    ESP_LOGI(TAG, "Waiting for WiFi connection...");
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
 
     if (bits & WIFI_CONNECTED_BIT) {
-        printf("WiFi connected.\n");
+        ESP_LOGI(TAG, "WiFi connected.");
     } else if (bits & WIFI_FAIL_BIT) {
-        printf("WiFi connection failed.\n");
+        ESP_LOGW(TAG, "WiFi connection failed.");
     } else {
         ESP_LOGE(TAG, "UNEXPECTED EVENT");
     }
@@ -231,7 +233,7 @@ void webServerTask(void *parameter) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     
 
-    printf("Starting web server\n");
+    ESP_LOGI(TAG, "Starting web server");
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_uri_t root_uri = {
             .uri       = "/",
@@ -249,7 +251,7 @@ void webServerTask(void *parameter) {
         };
         httpd_register_uri_handler(server, &cartlist_uri);
 
-        printf("HTTP server started\n");
+        ESP_LOGI(TAG, "HTTP server started");
     } else {
         ESP_LOGE(TAG, "Error starting web server!");
     }
@@ -258,7 +260,7 @@ void webServerTask(void *parameter) {
         vTaskDelay(pdMS_TO_TICKS(100)); // Small delay to allow other tasks to run
     }
 
-    printf("Web server task finished. Stopping web server and disconnecting WiFi.\n");
+    ESP_LOGI(TAG, "Web server task finished. Stopping web server and disconnecting WiFi.");
     if (server != NULL) {
         httpd_stop(server);
     }
@@ -296,7 +298,7 @@ void uartTask(void *parameter) {
                     }
                     uart_message += "\n";
                     uart_write_bytes(UART_NUM, uart_message.c_str(), uart_message.length());
-                    printf("Sent numbers over UART: %s\n", uart_message.c_str());
+                    ESP_LOGI(TAG, "Sent numbers over UART: %s", uart_message.c_str());
                     xSemaphoreGive(xMutex);
                 }
                 streamingStarted = true;
@@ -307,19 +309,19 @@ void uartTask(void *parameter) {
                 data[len] = '\0';
                 if (data[0] == 'h') {
                     float value = strtof((const char *)(data + 1), NULL);
-                    printf("Received haptic command: %s, value: %f\n", (const char*)data, value);
+                    ESP_LOGI(TAG, "Received haptic command: %s, value: %f", (const char*)data, value);
                     if (hapticQueue != NULL) {
                         xQueueSend(hapticQueue, &value, pdMS_TO_TICKS(10));
                     }
                 } else if (data[0] == 'a') {
                     int value = atoi((const char *)(data + 1));
-                    printf("Received audio command: %s, value: %d\n", (const char*)data, value);
+                    ESP_LOGI(TAG, "Received audio command: %s, value: %d", (const char*)data, value);
                     if (audioQueue != NULL) {
                         xQueueSend(audioQueue, &value, pdMS_TO_TICKS(10));
                     }
                 } else {
                     float value = strtof((const char *)data, NULL);
-                    printf("Received unknown feedback value via UART: %f\n", value);
+                    ESP_LOGW(TAG, "Received unknown feedback value via UART: %f", value);
                 }
             }
         }
@@ -360,7 +362,7 @@ void haptic_task(void *pvParameters) {
     haptic1->select_library(espp::Drv2605::Library::ERM_1, ec);
     haptic1->set_mode(espp::Drv2605::Mode::REALTIME, ec);
     setHapticEnable(HAPTIC_EN1_PIN, false);
-    printf("DRV2605 on GPIO%d initialized.\n", HAPTIC_EN1_PIN);
+    ESP_LOGI(TAG, "DRV2605 on GPIO%d initialized.", HAPTIC_EN1_PIN);
 
     setHapticEnable(HAPTIC_EN2_PIN, true);
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -371,13 +373,13 @@ void haptic_task(void *pvParameters) {
     haptic2->select_library(espp::Drv2605::Library::ERM_1, ec);
     haptic2->set_mode(espp::Drv2605::Mode::REALTIME, ec);
     setHapticEnable(HAPTIC_EN2_PIN, false);
-    printf("DRV2605 on GPIO%d initialized.\n", HAPTIC_EN2_PIN);
+    ESP_LOGI(TAG, "DRV2605 on GPIO%d initialized.", HAPTIC_EN2_PIN);
 
     float feedbackData = 0.0;
 
     while (1) {
         if (xQueueReceive(hapticQueue, &feedbackData, pdMS_TO_TICKS(10)) == pdTRUE) {
-            printf("[HAPTIC] Received feedback value: %f\n", feedbackData);
+            ESP_LOGI(TAG, "[HAPTIC] Received feedback value: %f", feedbackData);
             float scaled_value = 0;
             if (feedbackData < 0) {
                 scaled_value = feedbackData * -1.0f; // make it positive
@@ -424,14 +426,14 @@ void dac_output_task(void *pvParameters) {
     ESP_ERROR_CHECK(dac_oneshot_new_channel(&dac1_cfg, &dac1_handle));
     // Set DAC output to max value (255) which is ~3.3V, scaled to 500mV.
     ESP_ERROR_CHECK(dac_oneshot_output_voltage(dac1_handle, 255 * (0.5 / 3.3)));
-    printf("DAC1 (GPIO26) set to constant output.\n");
+    ESP_LOGI(TAG, "DAC1 (GPIO26) set to constant output.");
 
     vTaskDelete(NULL);
 }
 
 static void dac_audio_task(void *pvParameters) {
     dac_continuous_handle_t dac_handle = (dac_continuous_handle_t)pvParameters;
-    printf("DAC audio task started\n");
+    ESP_LOGI(TAG, "DAC audio task started");
 
     size_t audio_sizes[] = { sizeof(navigate_to_audio_data), sizeof(navigation_complete_audio_data), sizeof(turn_audio_data), sizeof(left_audio_data), sizeof(right_audio_data), sizeof(around_audio_data), sizeof(go_straight_audio_data), sizeof(meters_audio_data), sizeof(one_audio_data), sizeof(two_audio_data), sizeof(three_audio_data), sizeof(four_audio_data), sizeof(five_audio_data), sizeof(six_audio_data), sizeof(seven_audio_data), sizeof(eight_audio_data), sizeof(nine_audio_data), sizeof(ten_audio_data), sizeof(item_is_on_audio_data), sizeof(aisle_audio_data), sizeof(shelf_audio_data) };
     uint8_t *audio_tracks[] = { (uint8_t *)navigate_to_audio_data, (uint8_t *)navigation_complete_audio_data, (uint8_t *)turn_audio_data, (uint8_t *)left_audio_data, (uint8_t *)right_audio_data, (uint8_t *)around_audio_data, (uint8_t *)go_straight_audio_data, (uint8_t *)meters_audio_data, (uint8_t *)one_audio_data, (uint8_t *)two_audio_data, (uint8_t *)three_audio_data, (uint8_t *)four_audio_data, (uint8_t *)five_audio_data, (uint8_t *)six_audio_data, (uint8_t *)seven_audio_data, (uint8_t *)eight_audio_data, (uint8_t *)nine_audio_data, (uint8_t *)ten_audio_data, (uint8_t *)item_is_on_audio_data, (uint8_t *)aisle_audio_data, (uint8_t *)shelf_audio_data };
@@ -441,18 +443,28 @@ static void dac_audio_task(void *pvParameters) {
     while(1) {
         if (xQueueReceive(audioQueue, &audio_index, portMAX_DELAY) == pdTRUE) {
             if (audio_index >= 0 && audio_index < num_tracks) {
-                printf("Playing audio track: %d\n", audio_index);
+                ESP_LOGI(TAG, "Playing audio track: %d", audio_index);
                 ESP_ERROR_CHECK(dac_continuous_write(dac_handle, audio_tracks[audio_index], audio_sizes[audio_index], NULL, -1));
             }
         }
     }
 }
 
+static void led_blink_task(void *pvParameters) {
+    gpio_reset_pin(LED_PIN);
+    gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
+    while (1) {
+        gpio_set_level(LED_PIN, 1);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        gpio_set_level(LED_PIN, 0);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 
 extern "C" void app_main(void)
 {
-    printf("Main app start\n");
-    printf("--------------------------------------\n");
+    ESP_LOGI(TAG, "Main app start");
 
     // Initialize NVS
     esp_err_t ret = nvs_flash_init();
@@ -463,9 +475,9 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(ret);
     
     // Initialize GPIO for amp enable
-    gpio_reset_pin(GPIO_NUM_33);
-    gpio_set_direction(GPIO_NUM_33, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_33, 1);
+    gpio_reset_pin(AUDIO_EN_PIN);
+    gpio_set_direction(AUDIO_EN_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(AUDIO_EN_PIN, 1);
 
     // Create mutex and queue
     xMutex = xSemaphoreCreateMutex();
@@ -498,7 +510,7 @@ extern "C" void app_main(void)
     };
     ESP_ERROR_CHECK(dac_continuous_new_channels(&cont_cfg, &dac_handle));
     ESP_ERROR_CHECK(dac_continuous_enable(dac_handle));
-    printf("DAC initialized success, DAC DMA is ready\n");
+    ESP_LOGI(TAG, "DAC initialized success, DAC DMA is ready");
 
     // Create tasks
     xTaskCreate(webServerTask, "WebServerTask", 8192, NULL, 5, &webServerTaskHandle);
@@ -506,6 +518,7 @@ extern "C" void app_main(void)
     xTaskCreate(haptic_task, "haptic_task", 4096, NULL, 5, &hapticTaskHandle);
     xTaskCreate(dac_audio_task, "dac_audio_task", 4096, dac_handle, 5, &dacTaskHandle);
     xTaskCreate(dac_output_task, "dac_output_task", 2048, NULL, 5, NULL);
+    xTaskCreate(led_blink_task, "led_blink_task", 2048, NULL, 5, NULL);
     
-    printf("All tasks created.\n");
+    ESP_LOGI(TAG, "All tasks created.");
 }
