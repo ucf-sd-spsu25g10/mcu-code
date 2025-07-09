@@ -21,3 +21,4 @@ debug/
 # Other common files to ignore
 *.swp
 .DS_Store
+sdkconfig.*
