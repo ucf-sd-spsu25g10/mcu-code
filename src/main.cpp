@@ -94,6 +94,8 @@ QueueHandle_t hapticQueue;
 QueueHandle_t audioQueue;
 volatile bool webServerActive = true;
 
+
+
 // UART settings
 #define UART_NUM UART_NUM_0
 #define UART_BUFFER_SIZE 128
@@ -397,7 +399,7 @@ void haptic_task(void *pvParameters) {
         
         if(haptic1_turn) { // after haptic 2 has run, increase pwm
             pwm_value += 10;
-            if (pwm_value > 127 || pwm_value < 0) { // Handle increment and overflow
+            if (pwm_value > 120) { // Handle increment and overflow
                 pwm_value = 0;
             }
         }
@@ -471,20 +473,56 @@ static void dac_audio_task(void *pvParameters) {
     size_t audio_sizes[] = { sizeof(navigate_to_audio_data), sizeof(navigation_complete_audio_data), sizeof(turn_audio_data), sizeof(left_audio_data), sizeof(right_audio_data), sizeof(around_audio_data), sizeof(go_straight_audio_data), sizeof(meters_audio_data), sizeof(one_audio_data), sizeof(two_audio_data), sizeof(three_audio_data), sizeof(four_audio_data), sizeof(five_audio_data), sizeof(six_audio_data), sizeof(seven_audio_data), sizeof(eight_audio_data), sizeof(nine_audio_data), sizeof(ten_audio_data), sizeof(item_is_on_audio_data), sizeof(aisle_audio_data), sizeof(shelf_audio_data) };
     uint8_t *audio_tracks[] = { (uint8_t *)navigate_to_audio_data, (uint8_t *)navigation_complete_audio_data, (uint8_t *)turn_audio_data, (uint8_t *)left_audio_data, (uint8_t *)right_audio_data, (uint8_t *)around_audio_data, (uint8_t *)go_straight_audio_data, (uint8_t *)meters_audio_data, (uint8_t *)one_audio_data, (uint8_t *)two_audio_data, (uint8_t *)three_audio_data, (uint8_t *)four_audio_data, (uint8_t *)five_audio_data, (uint8_t *)six_audio_data, (uint8_t *)seven_audio_data, (uint8_t *)eight_audio_data, (uint8_t *)nine_audio_data, (uint8_t *)ten_audio_data, (uint8_t *)item_is_on_audio_data, (uint8_t *)aisle_audio_data, (uint8_t *)shelf_audio_data };
     size_t num_tracks = sizeof(audio_tracks) / sizeof(audio_tracks[0]);
-    int audio_index;
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+    ESP_LOGI(TAG, "Number of audio tracks: %d", num_tracks);
+    for (size_t i = 0; i < num_tracks; ++i) {
+        ESP_LOGI(TAG, "Audio track %d size: %d", i, audio_sizes[i]);
+    }
 
     while(1) {
         #ifdef DEBUG_MODE // Loop through all audio tracks in DEBUG_MODE
-        for (int i = 0; i < num_tracks; ++i) {
-            ESP_LOGI(TAG, "DEBUG_MODE: Playing audio track: %d", i);
-            ESP_ERROR_CHECK(dac_continuous_write(dac_handle, audio_tracks[i], audio_sizes[i], NULL, -1));
-            vTaskDelay(pdMS_TO_TICKS(500)); // Short delay between tracks for debug
+        for (size_t i = 0; i < num_tracks; ++i) {
+            ESP_LOGI(TAG, "DEBUG_MODE: Playing audio track: %d, size: %d", i, audio_sizes[i]);
+            esp_err_t err = dac_continuous_write(dac_handle, audio_tracks[i], audio_sizes[i], NULL, -1);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "dac_continuous_write failed for track %d with error: %s", i, esp_err_to_name(err));
+            }
+            vTaskDelay(pdMS_TO_TICKS(audio_sizes[i] * 1000 / CONFIG_EXAMPLE_AUDIO_SAMPLE_RATE + 500)); // Add 500ms buffer
+            ESP_ERROR_CHECK(dac_continuous_disable(dac_handle));
+            ESP_ERROR_CHECK(dac_continuous_del_channels(dac_handle));
+            dac_continuous_config_t cont_cfg = {
+                .chan_mask = DAC_CHANNEL_MASK_CH0, // Use CH0 for audio
+                .desc_num = 4,
+                .buf_size = 2048,
+                .freq_hz = CONFIG_EXAMPLE_AUDIO_SAMPLE_RATE,
+                .offset = 0,
+                .clk_src = DAC_DIGI_CLK_SRC_APLL,
+                .chan_mode = DAC_CHANNEL_MODE_ALTER, // Use alternating mode for single channel
+            };
+            ESP_ERROR_CHECK(dac_continuous_new_channels(&cont_cfg, &dac_handle));
+            ESP_ERROR_CHECK(dac_continuous_enable(dac_handle));
         }
         #else // Normal operation waits for audio index from queue
+        int audio_index;
         if (xQueueReceive(audioQueue, &audio_index, portMAX_DELAY) == pdTRUE) {
-            if (audio_index >= 0 && audio_index < num_tracks) {
+            if (audio_index >= 0 && (size_t)audio_index < num_tracks) {
                 ESP_LOGI(TAG, "Playing audio track: %d", audio_index);
                 ESP_ERROR_CHECK(dac_continuous_write(dac_handle, audio_tracks[audio_index], audio_sizes[audio_index], NULL, -1));
+                vTaskDelay(pdMS_TO_TICKS(audio_sizes[audio_index] * 1000 / CONFIG_EXAMPLE_AUDIO_SAMPLE_RATE + 500)); // Add 500ms buffer
+                ESP_ERROR_CHECK(dac_continuous_disable(dac_handle));
+                ESP_ERROR_CHECK(dac_continuous_del_channels(dac_handle));
+                dac_continuous_config_t cont_cfg = {
+                    .chan_mask = DAC_CHANNEL_MASK_CH0, // Use CH0 for audio
+                    .desc_num = 4,
+                    .buf_size = 2048,
+                    .freq_hz = CONFIG_EXAMPLE_AUDIO_SAMPLE_RATE,
+                    .offset = 0,
+                    .clk_src = DAC_DIGI_CLK_SRC_APLL,
+                    .chan_mode = DAC_CHANNEL_MODE_ALTER, // Use alternating mode for single channel
+                };
+                ESP_ERROR_CHECK(dac_continuous_new_channels(&cont_cfg, &dac_handle));
+                ESP_ERROR_CHECK(dac_continuous_enable(dac_handle));
             }
         }
         #endif
@@ -515,6 +553,8 @@ extern "C" void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
     
+    
+
     // Initialize GPIO for amp enable
     gpio_reset_pin(AUDIO_EN_PIN);
     gpio_set_direction(AUDIO_EN_PIN, GPIO_MODE_OUTPUT);
@@ -550,6 +590,9 @@ extern "C" void app_main(void)
         .chan_mode = DAC_CHANNEL_MODE_ALTER, // Use alternating mode for single channel
     };
     ESP_ERROR_CHECK(dac_continuous_new_channels(&cont_cfg, &dac_handle));
+
+    
+
     ESP_ERROR_CHECK(dac_continuous_enable(dac_handle));
     ESP_LOGI(TAG, "DAC initialized success, DAC DMA is ready");
 
@@ -558,7 +601,7 @@ extern "C" void app_main(void)
     xTaskCreate(uartTask, "UartTask", 4096, NULL, 5, &uartTaskHandle);
     xTaskCreate(haptic_task, "haptic_task", 4096, NULL, 5, &hapticTaskHandle);
     xTaskCreate(dac_audio_task, "dac_audio_task", 4096, dac_handle, 5, &dacTaskHandle);
-    xTaskCreate(dac_output_task, "dac_output_task", 2048, NULL, 5, NULL);
+    //xTaskCreate(dac_output_task, "dac_output_task", 2048, NULL, 5, NULL);
     xTaskCreate(led_blink_task, "led_blink_task", 2048, NULL, 5, NULL);
     
     ESP_LOGI(TAG, "All tasks created.");
