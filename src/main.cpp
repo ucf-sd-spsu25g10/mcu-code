@@ -375,6 +375,36 @@ void haptic_task(void *pvParameters) {
     setHapticEnable(HAPTIC_EN2_PIN, false);
     ESP_LOGI(TAG, "DRV2605 on GPIO%d initialized.", HAPTIC_EN2_PIN);
 
+    #ifdef DEBUG_MODE
+    int8_t pwm_value = 0;
+    bool haptic1_turn = true;
+    while (1) {
+        if (haptic1_turn) {
+            ESP_LOGI(TAG, "[DEBUG] Haptic 1 PWM: %d", pwm_value);
+            setHapticEnable(HAPTIC_EN2_PIN, false);
+            haptic2->set_rtp_pwm_signed(0, ec);
+            setHapticEnable(HAPTIC_EN1_PIN, true);
+            haptic1->set_rtp_pwm_signed(pwm_value, ec);
+        } else {
+            ESP_LOGI(TAG, "[DEBUG] Haptic 2 PWM: %d", pwm_value);
+            setHapticEnable(HAPTIC_EN1_PIN, false);
+            haptic1->set_rtp_pwm_signed(0, ec);
+            setHapticEnable(HAPTIC_EN2_PIN, true);
+            haptic2->set_rtp_pwm_signed(pwm_value, ec);
+        }
+
+        haptic1_turn = !haptic1_turn;
+        
+        if(haptic1_turn) { // after haptic 2 has run, increase pwm
+            pwm_value += 10;
+            if (pwm_value > 127 || pwm_value < 0) { // Handle increment and overflow
+                pwm_value = 0;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    #else
     float feedbackData = 0.0;
 
     while (1) {
@@ -411,12 +441,15 @@ void haptic_task(void *pvParameters) {
             }
         }
     }
+#endif
 }
 
 void dac_output_task(void *pvParameters) {
+    #ifndef DEBUG_MODE // Enables laser DAC immediately if in DEBUG_MODE
     while (webServerActive) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
+    #endif
 
     // Configure and set DAC1 for constant output
     dac_oneshot_handle_t dac1_handle;
@@ -441,12 +474,20 @@ static void dac_audio_task(void *pvParameters) {
     int audio_index;
 
     while(1) {
+        #ifdef DEBUG_MODE // Loop through all audio tracks in DEBUG_MODE
+        for (int i = 0; i < num_tracks; ++i) {
+            ESP_LOGI(TAG, "DEBUG_MODE: Playing audio track: %d", i);
+            ESP_ERROR_CHECK(dac_continuous_write(dac_handle, audio_tracks[i], audio_sizes[i], NULL, -1));
+            vTaskDelay(pdMS_TO_TICKS(500)); // Short delay between tracks for debug
+        }
+        #else // Normal operation waits for audio index from queue
         if (xQueueReceive(audioQueue, &audio_index, portMAX_DELAY) == pdTRUE) {
             if (audio_index >= 0 && audio_index < num_tracks) {
                 ESP_LOGI(TAG, "Playing audio track: %d", audio_index);
                 ESP_ERROR_CHECK(dac_continuous_write(dac_handle, audio_tracks[audio_index], audio_sizes[audio_index], NULL, -1));
             }
         }
+        #endif
     }
 }
 
