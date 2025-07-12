@@ -424,8 +424,8 @@ void dac_output_task(void *pvParameters) {
         .chan_id = DAC_CHAN_1,
     };
     ESP_ERROR_CHECK(dac_oneshot_new_channel(&dac1_cfg, &dac1_handle));
-    // Set DAC output to max value (255) which is ~3.3V, scaled to 500mV.
-    ESP_ERROR_CHECK(dac_oneshot_output_voltage(dac1_handle, 255 * (0.5 / 3.3)));
+    // Set DAC output to max value (255) which is ~3.3V, scaled to 250mV.
+    ESP_ERROR_CHECK(dac_oneshot_output_voltage(dac1_handle, 255 * (0.25 / 3.3)));
     ESP_LOGI(TAG, "DAC1 (GPIO26) set to constant output.");
 
     vTaskDelete(NULL);
