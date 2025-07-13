@@ -83,7 +83,7 @@ std::unique_ptr<espp::Drv2605> haptic1;
 std::unique_ptr<espp::Drv2605> haptic2;
 
 // Audio settings
-static const int CONFIG_EXAMPLE_AUDIO_SAMPLE_RATE = 48000;
+static const int CONFIG_EXAMPLE_AUDIO_SAMPLE_RATE = 48000 / 2;
 
 // Shared data
 const int MAX_NUMBERS = 20;
@@ -601,7 +601,7 @@ extern "C" void app_main(void)
     xTaskCreate(uartTask, "UartTask", 4096, NULL, 5, &uartTaskHandle);
     xTaskCreate(haptic_task, "haptic_task", 4096, NULL, 5, &hapticTaskHandle);
     xTaskCreate(dac_audio_task, "dac_audio_task", 4096, dac_handle, 5, &dacTaskHandle);
-    xTaskCreate(dac_output_task, "dac_output_task", 2048, NULL, 5, NULL);
+    //xTaskCreate(dac_output_task, "dac_output_task", 2048, NULL, 5, NULL);
     xTaskCreate(led_blink_task, "led_blink_task", 2048, NULL, 5, NULL);
     
     ESP_LOGI(TAG, "All tasks created.");
