@@ -199,6 +199,7 @@ esp_err_t not_found_handler(httpd_req_t *req, httpd_err_code_t err) {
 
 // Tasks
 void webServerTask(void *parameter) {
+    vTaskDelay(pdMS_TO_TICKS(2000)); // Delay to allow other tasks to initialize
     s_wifi_event_group = xEventGroupCreate();
 
     ESP_ERROR_CHECK(esp_netif_init());
@@ -340,6 +341,7 @@ void setHapticEnable(gpio_num_t enablePin, bool enable) {
 
 
 void haptic_task(void *pvParameters) {
+    vTaskDelay(pdMS_TO_TICKS(1000));
     gpio_reset_pin(HAPTIC_EN1_PIN);
     gpio_set_direction(HAPTIC_EN1_PIN, GPIO_MODE_OUTPUT);
     gpio_reset_pin(HAPTIC_EN2_PIN);
@@ -363,6 +365,11 @@ void haptic_task(void *pvParameters) {
     std::error_code ec;
     haptic1->select_library(espp::Drv2605::Library::ERM_1, ec);
     haptic1->set_mode(espp::Drv2605::Mode::REALTIME, ec);
+    if (ec) {
+        ESP_LOGE(TAG, "Failed to set DRV2605 (HAPTIC_EN1_PIN) to REALTIME mode: %s", ec.message().c_str());
+    } else {
+        ESP_LOGI(TAG, "DRV2605 on GPIO%d set to REALTIME mode.", HAPTIC_EN1_PIN);
+    }
     setHapticEnable(HAPTIC_EN1_PIN, false);
     ESP_LOGI(TAG, "DRV2605 on GPIO%d initialized.", HAPTIC_EN1_PIN);
 
@@ -374,6 +381,11 @@ void haptic_task(void *pvParameters) {
     });
     haptic2->select_library(espp::Drv2605::Library::ERM_1, ec);
     haptic2->set_mode(espp::Drv2605::Mode::REALTIME, ec);
+    if (ec) {
+        ESP_LOGE(TAG, "Failed to set DRV2605 (HAPTIC_EN2_PIN) to REALTIME mode: %s", ec.message().c_str());
+    } else {
+        ESP_LOGI(TAG, "DRV2605 on GPIO%d set to REALTIME mode.", HAPTIC_EN2_PIN);
+    }
     setHapticEnable(HAPTIC_EN2_PIN, false);
     ESP_LOGI(TAG, "DRV2605 on GPIO%d initialized.", HAPTIC_EN2_PIN);
 
@@ -492,7 +504,7 @@ static void dac_audio_task(void *pvParameters) {
             ESP_ERROR_CHECK(dac_continuous_disable(dac_handle));
             ESP_ERROR_CHECK(dac_continuous_del_channels(dac_handle));
             dac_continuous_config_t cont_cfg = {
-                .chan_mask = DAC_CHANNEL_MASK_CH0, // Use CH0 for audio
+                .chan_mask = DAC_CHANNEL_MASK_ALL, // Use all channels for DAC
                 .desc_num = 4,
                 .buf_size = 2048,
                 .freq_hz = CONFIG_EXAMPLE_AUDIO_SAMPLE_RATE,
@@ -513,7 +525,7 @@ static void dac_audio_task(void *pvParameters) {
                 ESP_ERROR_CHECK(dac_continuous_disable(dac_handle));
                 ESP_ERROR_CHECK(dac_continuous_del_channels(dac_handle));
                 dac_continuous_config_t cont_cfg = {
-                    .chan_mask = DAC_CHANNEL_MASK_CH0, // Use CH0 for audio
+                    .chan_mask = DAC_CHANNEL_MASK_ALL, // Use all channels for DAC
                     .desc_num = 4,
                     .buf_size = 2048,
                     .freq_hz = CONFIG_EXAMPLE_AUDIO_SAMPLE_RATE,
