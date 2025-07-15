@@ -51,6 +51,7 @@ extern "C" {
 #include "item_is_on.h"
 #include "aisle.h"
 #include "shelf.h"
+#include "obstacle_is.h"
 
 #include "esp_wifi.h"
 #include "esp_event.h"
@@ -482,8 +483,8 @@ static void dac_audio_task(void *pvParameters) {
     dac_continuous_handle_t dac_handle = (dac_continuous_handle_t)pvParameters;
     ESP_LOGI(TAG, "DAC audio task started");
 
-    size_t audio_sizes[] = { sizeof(navigate_to_audio_data), sizeof(navigation_complete_audio_data), sizeof(turn_audio_data), sizeof(left_audio_data), sizeof(right_audio_data), sizeof(around_audio_data), sizeof(go_straight_audio_data), sizeof(meters_audio_data), sizeof(one_audio_data), sizeof(two_audio_data), sizeof(three_audio_data), sizeof(four_audio_data), sizeof(five_audio_data), sizeof(six_audio_data), sizeof(seven_audio_data), sizeof(eight_audio_data), sizeof(nine_audio_data), sizeof(ten_audio_data), sizeof(item_is_on_audio_data), sizeof(aisle_audio_data), sizeof(shelf_audio_data) };
-    uint8_t *audio_tracks[] = { (uint8_t *)navigate_to_audio_data, (uint8_t *)navigation_complete_audio_data, (uint8_t *)turn_audio_data, (uint8_t *)left_audio_data, (uint8_t *)right_audio_data, (uint8_t *)around_audio_data, (uint8_t *)go_straight_audio_data, (uint8_t *)meters_audio_data, (uint8_t *)one_audio_data, (uint8_t *)two_audio_data, (uint8_t *)three_audio_data, (uint8_t *)four_audio_data, (uint8_t *)five_audio_data, (uint8_t *)six_audio_data, (uint8_t *)seven_audio_data, (uint8_t *)eight_audio_data, (uint8_t *)nine_audio_data, (uint8_t *)ten_audio_data, (uint8_t *)item_is_on_audio_data, (uint8_t *)aisle_audio_data, (uint8_t *)shelf_audio_data };
+    size_t audio_sizes[] = { sizeof(navigate_to_audio_data), sizeof(navigation_complete_audio_data), sizeof(turn_audio_data), sizeof(left_audio_data), sizeof(right_audio_data), sizeof(around_audio_data), sizeof(go_straight_audio_data), sizeof(meters_audio_data), sizeof(one_audio_data), sizeof(two_audio_data), sizeof(three_audio_data), sizeof(four_audio_data), sizeof(five_audio_data), sizeof(six_audio_data), sizeof(seven_audio_data), sizeof(eight_audio_data), sizeof(nine_audio_data), sizeof(ten_audio_data), sizeof(item_is_on_audio_data), sizeof(aisle_audio_data), sizeof(shelf_audio_data), sizeof(obstacle_is_audio_data) };
+    uint8_t *audio_tracks[] = { (uint8_t *)navigate_to_audio_data, (uint8_t *)navigation_complete_audio_data, (uint8_t *)turn_audio_data, (uint8_t *)left_audio_data, (uint8_t *)right_audio_data, (uint8_t *)around_audio_data, (uint8_t *)go_straight_audio_data, (uint8_t *)meters_audio_data, (uint8_t *)one_audio_data, (uint8_t *)two_audio_data, (uint8_t *)three_audio_data, (uint8_t *)four_audio_data, (uint8_t *)five_audio_data, (uint8_t *)six_audio_data, (uint8_t *)seven_audio_data, (uint8_t *)eight_audio_data, (uint8_t *)nine_audio_data, (uint8_t *)ten_audio_data, (uint8_t *)item_is_on_audio_data, (uint8_t *)aisle_audio_data, (uint8_t *)shelf_audio_data, (uint8_t *)obstacle_is_audio_data };
     size_t num_tracks = sizeof(audio_tracks) / sizeof(audio_tracks[0]);
 
     vTaskDelay(pdMS_TO_TICKS(100));
