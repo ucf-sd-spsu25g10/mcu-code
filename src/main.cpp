@@ -308,7 +308,7 @@ void uartTask(void *parameter) {
     uart_config.source_clk = UART_SCLK_APB; // Use APB clock for UART
     uart_driver_install(UART_NUM, UART_BUFFER_SIZE * 2, 0, 0, NULL, 0);
     uart_param_config(UART_NUM, &uart_config);
-    uart_set_pin(UART_NUM, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_set_pin(UART_NUM, GPIO_NUM_23, GPIO_NUM_22, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 
     uint8_t* data = (uint8_t*) malloc(UART_BUFFER_SIZE);
     bool streamingStarted = false;
