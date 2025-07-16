@@ -147,6 +147,19 @@ esp_err_t root_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+esp_err_t cartlist_options_handler(httpd_req_t *req) {
+    // Set CORS headers
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "POST, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
+
+    // Respond with 204 No Content
+    httpd_resp_set_status(req, "204 No Content");
+    httpd_resp_send(req, NULL, 0);
+
+    return ESP_OK;
+}
+
 esp_err_t cartlist_post_handler(httpd_req_t *req) {
     char content[req->content_len + 1];
     int ret = httpd_req_recv(req, content, req->content_len);
@@ -187,6 +200,9 @@ esp_err_t cartlist_post_handler(httpd_req_t *req) {
     cJSON_Delete(root);
 
     const char *response = "{\"status\":\"success\"}";
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "POST, OPTIONS");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type");
     httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
     webServerActive = false;
     ESP_LOGI(TAG, "Valid JSON received. Web server will disconnect.");
@@ -216,7 +232,7 @@ void webServerTask(void *parameter) {
     wifi_config_t wifi_config = {};
     strcpy((char*)wifi_config.sta.ssid, WIFI_SSID);
     strcpy((char*)wifi_config.sta.password, WIFI_PASSWORD);
-    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config.sta.threshold.authmode = WIFI_AUTH_OPEN;
     wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
@@ -254,6 +270,14 @@ void webServerTask(void *parameter) {
             .user_ctx  = NULL
         };
         httpd_register_uri_handler(server, &cartlist_uri);
+
+        httpd_uri_t cartlist_uri_options = {
+            .uri       = "/api/cartList",
+            .method    = HTTP_OPTIONS,
+            .handler   = cartlist_options_handler,
+            .user_ctx  = NULL
+        };
+        httpd_register_uri_handler(server, &cartlist_uri_options);
 
         ESP_LOGI(TAG, "HTTP server started");
     } else {
