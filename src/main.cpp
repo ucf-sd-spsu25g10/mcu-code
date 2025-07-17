@@ -67,8 +67,8 @@ extern "C" {
 static const char *TAG = "NAVIS_MCU";
 
 // Pin definitions
-static constexpr gpio_num_t HAPTIC_EN1_PIN = GPIO_NUM_16;
-static constexpr gpio_num_t HAPTIC_EN2_PIN = GPIO_NUM_17;
+static constexpr gpio_num_t HAPTIC_EN1_PIN = GPIO_NUM_17;
+static constexpr gpio_num_t HAPTIC_EN2_PIN = GPIO_NUM_16;
 static constexpr gpio_num_t I2C_SDA_PIN = GPIO_NUM_18;
 static constexpr gpio_num_t I2C_SCL_PIN = GPIO_NUM_19;
 static constexpr i2c_port_t I2C_PORT = I2C_NUM_0;
