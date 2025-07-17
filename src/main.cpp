@@ -77,7 +77,7 @@ static constexpr gpio_num_t LED_PIN = GPIO_NUM_27; // GPIO pin for LED indicator
 
 // Haptic effect definitions
 
-static constexpr int EFFECT_DURATION_MS = 250; // Shorter duration for responsiveness
+static constexpr int EFFECT_DURATION_MS = 350; // Shorter duration for responsiveness
 
 // Haptic Driver Instances
 std::unique_ptr<espp::Drv2605> haptic1;
@@ -474,13 +474,13 @@ void haptic_task(void *pvParameters) {
             ESP_LOGI(TAG, "[HAPTIC] Received feedback value: %f", feedbackData);
             float scaled_value = 0;
             if (feedbackData < 0) {
-                scaled_value = feedbackData * -1.0f; // make it positive
-                scaled_value = (scaled_value / 255.0f) * 127.0f; // scale to 0-127
+                float abs_val = feedbackData * -1.0f;
+                // Exponential scaling: y = 127 * (1 - exp(-k * abs_val / 255)), k=4
+                float k = 4.0f;
+                scaled_value = 127.0f * (1.0f - expf(-k * abs_val / 255.0f));
                 if (scaled_value > 127.0f) scaled_value = 127.0f; // clamp
                 if (scaled_value < 5.0f) scaled_value = 0.0f; // Deadzone
-                
                 int8_t pwm_value = static_cast<int8_t>(scaled_value);
-
                 std::error_code ec;
                 setHapticEnable(HAPTIC_EN1_PIN, true);
                 haptic1->set_rtp_pwm_signed(pwm_value, ec);
@@ -488,12 +488,12 @@ void haptic_task(void *pvParameters) {
                 haptic1->set_rtp_pwm_signed(0, ec);
                 setHapticEnable(HAPTIC_EN1_PIN, false);
             } else if (feedbackData > 0) {
-                scaled_value = (feedbackData / 255.0f) * 127.0f; // scale to 0-127
+                // Exponential scaling: y = 127 * (1 - exp(-k * feedbackData / 255)), k=4
+                float k = 4.0f;
+                scaled_value = 127.0f * (1.0f - expf(-k * feedbackData / 255.0f));
                 if (scaled_value > 127.0f) scaled_value = 127.0f; // clamp
                 if (scaled_value < 5.0f) scaled_value = 0.0f; // Deadzone
-
                 int8_t pwm_value = static_cast<int8_t>(scaled_value);
-
                 std::error_code ec;
                 setHapticEnable(HAPTIC_EN2_PIN, true);
                 haptic2->set_rtp_pwm_signed(pwm_value, ec);
