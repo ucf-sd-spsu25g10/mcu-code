@@ -339,7 +339,7 @@ void uartTask(void *parameter) {
                             uart_message += ",";
                         }
                     }
-                    uart_message += "\n";
+                    uart_message += ";\n";
                     int len = uart_write_bytes(UART_NUM, uart_message.c_str(), uart_message.length());
                     ESP_LOGI(TAG, "Sent numbers over UART: %s", len > 0 ? uart_message.c_str() : "Failed to send");
                     xSemaphoreGive(xMutex);
