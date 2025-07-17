@@ -77,7 +77,7 @@ static constexpr gpio_num_t LED_PIN = GPIO_NUM_27; // GPIO pin for LED indicator
 
 // Haptic effect definitions
 
-static constexpr int EFFECT_DURATION_MS = 2000; // Shorter duration for responsiveness
+static constexpr int EFFECT_DURATION_MS = 250; // Shorter duration for responsiveness
 
 // Haptic Driver Instances
 std::unique_ptr<espp::Drv2605> haptic1;
@@ -98,7 +98,7 @@ volatile bool webServerActive = true;
 
 
 // UART settings
-#define UART_NUM UART_NUM_0
+#define UART_NUM UART_NUM_2
 #define UART_BUFFER_SIZE 128
 
 // Task Handles
@@ -306,9 +306,24 @@ void uartTask(void *parameter) {
     uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
     uart_config.rx_flow_ctrl_thresh = 122;
     uart_config.source_clk = UART_SCLK_APB; // Use APB clock for UART
-    uart_driver_install(UART_NUM, UART_BUFFER_SIZE * 2, 0, 0, NULL, 0);
-    uart_param_config(UART_NUM, &uart_config);
-    uart_set_pin(UART_NUM, GPIO_NUM_23, GPIO_NUM_22, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    esp_err_t err = uart_driver_install(UART_NUM, UART_BUFFER_SIZE * 2, 0, 0, NULL, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to install UART driver: %s", esp_err_to_name(err));
+        vTaskDelete(NULL);
+        return;
+    }
+    err = uart_param_config(UART_NUM, &uart_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set UART parameters: %s", esp_err_to_name(err));
+        vTaskDelete(NULL);
+        return;
+    }
+    err = uart_set_pin(UART_NUM, GPIO_NUM_23, GPIO_NUM_22, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set UART pins: %s", esp_err_to_name(err));
+        vTaskDelete(NULL);
+        return;
+    }
 
     uint8_t* data = (uint8_t*) malloc(UART_BUFFER_SIZE);
     bool streamingStarted = false;
@@ -325,8 +340,8 @@ void uartTask(void *parameter) {
                         }
                     }
                     uart_message += "\n";
-                    uart_write_bytes(UART_NUM, uart_message.c_str(), uart_message.length());
-                    ESP_LOGI(TAG, "Sent numbers over UART: %s", uart_message.c_str());
+                    int len = uart_write_bytes(UART_NUM, uart_message.c_str(), uart_message.length());
+                    ESP_LOGI(TAG, "Sent numbers over UART: %s", len > 0 ? uart_message.c_str() : "Failed to send");
                     xSemaphoreGive(xMutex);
                 }
                 streamingStarted = true;
@@ -334,6 +349,7 @@ void uartTask(void *parameter) {
 
             int len = uart_read_bytes(UART_NUM, data, UART_BUFFER_SIZE - 1, 20 / portTICK_PERIOD_MS);
             if (len > 0) {
+                ESP_LOGI(TAG, "Read %d bytes from UART", len);
                 data[len] = '\0';
                 if (data[0] == 'h') {
                     float value = strtof((const char *)(data + 1), NULL);
@@ -452,7 +468,7 @@ void haptic_task(void *pvParameters) {
             float scaled_value = 0;
             if (feedbackData < 0) {
                 scaled_value = feedbackData * -1.0f; // make it positive
-                scaled_value = (scaled_value / 100.0f) * 127.0f; // scale to 0-127
+                scaled_value = (scaled_value / 255.0f) * 127.0f; // scale to 0-127
                 if (scaled_value > 127.0f) scaled_value = 127.0f; // clamp
                 if (scaled_value < 5.0f) scaled_value = 0.0f; // Deadzone
                 
@@ -465,7 +481,7 @@ void haptic_task(void *pvParameters) {
                 haptic1->set_rtp_pwm_signed(0, ec);
                 setHapticEnable(HAPTIC_EN1_PIN, false);
             } else if (feedbackData > 0) {
-                scaled_value = (feedbackData / 100.0f) * 127.0f; // scale to 0-127
+                scaled_value = (feedbackData / 255.0f) * 127.0f; // scale to 0-127
                 if (scaled_value > 127.0f) scaled_value = 127.0f; // clamp
                 if (scaled_value < 5.0f) scaled_value = 0.0f; // Deadzone
 
@@ -580,7 +596,11 @@ static void led_blink_task(void *pvParameters) {
 
 extern "C" void app_main(void)
 {
-    ESP_LOGI(TAG, "Main app start");
+    ESP_LOGI(TAG, "Main app start in 2 seconds...");
+
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    ESP_LOGI(TAG, "Starting NAVIS MCU application...");
 
     // Initialize NVS
     esp_err_t ret = nvs_flash_init();
