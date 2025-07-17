@@ -351,21 +351,28 @@ void uartTask(void *parameter) {
             if (len > 0) {
                 ESP_LOGI(TAG, "Read %d bytes from UART", len);
                 data[len] = '\0';
-                if (data[0] == 'h') {
-                    float value = strtof((const char *)(data + 1), NULL);
-                    ESP_LOGI(TAG, "Received haptic command: %s, value: %f", (const char*)data, value);
-                    if (hapticQueue != NULL) {
-                        xQueueSend(hapticQueue, &value, pdMS_TO_TICKS(10));
+                std::string uart_input(reinterpret_cast<char*>(data));
+                size_t start = 0, end = 0;
+                while ((end = uart_input.find('\n', start)) != std::string::npos) {
+                    std::string cmd = uart_input.substr(start, end - start);
+                    start = end + 1;
+                    if (cmd.empty()) continue;
+                    if (cmd[0] == 'h') {
+                        float value = strtof(cmd.c_str() + 1, NULL);
+                        ESP_LOGI(TAG, "Received haptic command: %s, value: %f", cmd.c_str(), value);
+                        if (hapticQueue != NULL) {
+                            xQueueSend(hapticQueue, &value, pdMS_TO_TICKS(10));
+                        }
+                    } else if (cmd[0] == 'a') {
+                        int value = atoi(cmd.c_str() + 1);
+                        ESP_LOGI(TAG, "Received audio command: %s, value: %d", cmd.c_str(), value);
+                        if (audioQueue != NULL) {
+                            xQueueSend(audioQueue, &value, pdMS_TO_TICKS(10));
+                        }
+                    } else {
+                        float value = strtof(cmd.c_str(), NULL);
+                        ESP_LOGW(TAG, "Received unknown feedback value via UART: %f", value);
                     }
-                } else if (data[0] == 'a') {
-                    int value = atoi((const char *)(data + 1));
-                    ESP_LOGI(TAG, "Received audio command: %s, value: %d", (const char*)data, value);
-                    if (audioQueue != NULL) {
-                        xQueueSend(audioQueue, &value, pdMS_TO_TICKS(10));
-                    }
-                } else {
-                    float value = strtof((const char *)data, NULL);
-                    ESP_LOGW(TAG, "Received unknown feedback value via UART: %f", value);
                 }
             }
         }
